@@ -15,20 +15,20 @@ class DataResource:
             params["year"] = year
         return self._client._request("GET", SYMBOLS_PATH, params=params)
 
-    def get_orders(self, sym, datetime_start, datetime_end):
-        params = {"sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
+    def get_orders(self, exchange, sym, datetime_start, datetime_end):
+        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
         return self._client._request_csv("GET", ORDERS_PATH, params=params)
 
-    def get_trades(self, sym, datetime_start, datetime_end):
-        params = {"sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
+    def get_trades(self, exchange, sym, datetime_start, datetime_end):
+        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
         return self._client._request_csv("GET", TRADES_PATH, params=params)
 
-    def get_L1(self, sym, datetime_start, datetime_end):
-        params = {"sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
+    def get_L1(self, exchange, sym, datetime_start, datetime_end):
+        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
         return self._client._request_csv("GET", L1_PATH, params=params)
 
-    def get_L2(self, sym, datetime_start, datetime_end, columns=None):
-        params = {"sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
+    def get_L2(self, exchange, sym, datetime_start, datetime_end, columns=None):
+        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
         if columns:
             params["columns"] = columns
         return self._client._request_csv("GET", L2_PATH, params=params)

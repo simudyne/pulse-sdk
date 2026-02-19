@@ -19,24 +19,24 @@ print(symbols)
 print()
 
 # ── L1: top of book ──
-l1 = client.data.get_L1("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:20:00")
+l1 = client.data.get_L1("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:20:00")
 print("L1 (top of book):")
 print(l1.head())
 print()
 
 # ── L2: full order book ──
-l2 = client.data.get_L2("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
+l2 = client.data.get_L2("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
 print("L2 (full order book):")
 print(l2.head())
 print()
 
 # ── Orders ──
-orders = client.data.get_orders("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:20:00")
+orders = client.data.get_orders("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:20:00")
 print("Orders:")
 print(orders.head())
 print()
 
 # ── Trades ──
-trades = client.data.get_trades("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
+trades = client.data.get_trades("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
 print("Trades:")
 print(trades.head())

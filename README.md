@@ -23,12 +23,12 @@ from simudyne import PulseABM
 
 client = PulseABM(api_key="pk_live_...")
 
-# List available symbols and dates
+# List available exchanges, symbols, and dates
 symbols = client.data.get_symbols(year=2024)
 print(symbols)
 
 # Fetch L2 order book data
-df = client.data.get_L2("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
+df = client.data.get_L2("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
 print(df.head())
 ```
 
@@ -46,26 +46,27 @@ print(df.head())
 All data methods return Polars DataFrames. Large result sets are automatically paginated.
 
 ```python
-# Available symbols and dates
+# Available exchanges, symbols, and dates
 client.data.get_symbols(year=2024)
 
-# L1 — top of book (best bid/ask)
-client.data.get_L1("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
+# L1: top of book (best bid/ask)
+client.data.get_L1("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
 
-# L2 — full order book (all levels)
-client.data.get_L2("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
+# L2: full order book (all levels)
+client.data.get_L2("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
 
-# Orders — individual order events
-client.data.get_orders("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
+# Orders: individual order events
+client.data.get_orders("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
 
-# Trades — executed trades
-client.data.get_trades("HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
+# Trades: executed trades
+client.data.get_trades("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
 ```
 
 **Parameters** (same for all data methods):
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `exchange` | str | Exchange code (e.g. `HKEX`) |
 | `sym` | str | Symbol name (e.g. `HSIJ4`) |
 | `datetime_start` | str | Start time, ISO 8601 (e.g. `2024-04-02T09:15:00`) |
 | `datetime_end` | str | End time, ISO 8601 |
