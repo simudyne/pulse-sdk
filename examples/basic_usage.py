@@ -10,7 +10,7 @@ Before running:
 
 from simudyne import PulseABM
 
-client = PulseABM()
+client = PulseABM(api_key="YOUR_API_KEY")
 
 # ── Discover available data ──
 symbols = client.data.get_symbols(year=2024)

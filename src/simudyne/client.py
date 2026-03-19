@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 import io
 import polars as pl
@@ -25,11 +26,13 @@ class PulseABM:
         from simudyne.resources.api_keys import ApiKeysResource
         from simudyne.resources.data import DataResource
         from simudyne.resources.historical import HistoricalResource
+        from simudyne.resources.simulation import SimulationResource
 
         self.profile = ProfileResource(self)
         self.api_keys = ApiKeysResource(self)
         self.data = DataResource(self)
         self.historical = HistoricalResource(self)
+        self.simulation = SimulationResource(self)
 
     def _request(self, method:str,endpoint:str, **kwargs):
         url = f"{self.base_url}{endpoint}"
@@ -82,5 +85,5 @@ class PulseABM:
                     pbar.update(1)
         
         result = pl.concat(frames) if len(frames) > 1 else frames[0]
-        print(f"Done: {result.shape[0]:,} rows, {result.shape[1]} columns")
+        print(f"Done: {result.shape[0]:,} rows, {result.shape[1]} columns", file=sys.stderr)
         return result
