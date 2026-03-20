@@ -16,6 +16,8 @@ import io
 RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
+AVAILABLE_PATH = "/simulation/data/available"
+CALIBRATE_PATH = "/calibrate"
 
 # Available market scenarios
 SCENARIOS = {
@@ -89,6 +91,63 @@ class SimulationResource:
     
     def __init__(self, client):
         self._client = client
+
+    def get_available_data(self):
+        """Return the latest symbol_config entry for every available symbol.
+
+        Queries the server for the most recent record per symbol_id, covering
+        all symbols that have been processed through the data pipeline.
+
+        Returns:
+            list[dict]: One dict per symbol_id, containing all symbol_config
+                fields (symbol, exchange, date, tick_size, reference_price,
+                status, stage, etc.).
+
+        Example:
+            >>> entries = client.simulation.get_available_data()
+            >>> for e in entries:
+            ...     print(e["symbol"], e["exchange"], e["date"], e["status"])
+        """
+        return self._client._request("GET", AVAILABLE_PATH)
+
+    def calibrate(
+        self,
+        symbol: str,
+        cal_date: str,
+        simulations: int = None,
+        batch_size: int = None,
+        optimize_adj_params: bool = True,
+    ):
+        """Trigger a model calibration run for a symbol and date.
+
+        Starts the calibration process on the server as a background task.
+        The server will run the Chiarella surrogate model calibration and
+        write the resulting parameters to the calibration_params table.
+
+        Args:
+            symbol: Trading symbol (e.g., "9999.HK")
+            cal_date: Calibration date in YYYY-MM-DD format
+            simulations: Number of simulations to run during calibration
+            batch_size: Batch size for calibration runs
+            optimize_adj_params: Whether to optimise adjustment parameters (default True)
+
+        Returns:
+            dict: Contains status, symbol, and cal_date confirming the job was queued.
+
+        Example:
+            >>> client.simulation.calibrate(symbol="9999.HK", cal_date="2025-09-01")
+            {'status': 'calibration_queued', 'symbol': '9999.HK', 'cal_date': '2025-09-01'}
+        """
+        payload = {
+            "symbol": symbol,
+            "cal_date": cal_date,
+            "optimize_adj_params": optimize_adj_params,
+        }
+        if simulations is not None:
+            payload["simulations"] = simulations
+        if batch_size is not None:
+            payload["batch_size"] = batch_size
+        return self._client._request("POST", CALIBRATE_PATH, json=payload)
 
     def run(
         self,

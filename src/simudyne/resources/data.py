@@ -1,34 +1,14 @@
-SYMBOLS_PATH = "/data/symbols"
-ORDERS_PATH = "/data/orders"
-TRADES_PATH = "/data/trades"
-L1_PATH = "/data/L1"
-L2_PATH = "/data/L2"
+AVAILABLE_PATH = "/data/available"
 
 
 class DataResource:
     def __init__(self, client):
         self._client = client
 
-    def get_symbols(self, year=None):
-        params = {}
-        if year:
-            params["year"] = year
-        return self._client._request("GET", SYMBOLS_PATH, params=params)
+    def get_available(self):
+        """Return all symbols and dates available from symbol_config.
 
-    def get_orders(self, exchange, sym, datetime_start, datetime_end):
-        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
-        return self._client._request_csv("GET", ORDERS_PATH, params=params)
-
-    def get_trades(self, exchange, sym, datetime_start, datetime_end):
-        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
-        return self._client._request_csv("GET", TRADES_PATH, params=params)
-
-    def get_L1(self, exchange, sym, datetime_start, datetime_end):
-        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
-        return self._client._request_csv("GET", L1_PATH, params=params)
-
-    def get_L2(self, exchange, sym, datetime_start, datetime_end, columns=None):
-        params = {"exchange": exchange, "sym": sym, "datetime_start": datetime_start, "datetime_end": datetime_end}
-        if columns:
-            params["columns"] = columns
-        return self._client._request_csv("GET", L2_PATH, params=params)
+        Returns a list of DataCatalogEntry dicts:
+            [{"symbol": "700.HK", "exchange": "HKEX", "dates": ["2025-09-01", ...]}]
+        """
+        return self._client._request("GET", AVAILABLE_PATH)
