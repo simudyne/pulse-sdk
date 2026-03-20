@@ -92,24 +92,6 @@ class SimulationResource:
     def __init__(self, client):
         self._client = client
 
-    def get_available_data(self):
-        """Return the latest symbol_config entry for every available symbol.
-
-        Queries the server for the most recent record per symbol_id, covering
-        all symbols that have been processed through the data pipeline.
-
-        Returns:
-            list[dict]: One dict per symbol_id, containing all symbol_config
-                fields (symbol, exchange, date, tick_size, reference_price,
-                status, stage, etc.).
-
-        Example:
-            >>> entries = client.simulation.get_available_data()
-            >>> for e in entries:
-            ...     print(e["symbol"], e["exchange"], e["date"], e["status"])
-        """
-        return self._client._request("GET", AVAILABLE_PATH)
-
     def calibrate(
         self,
         symbol: str,
@@ -200,7 +182,6 @@ class SimulationResource:
                 - mt_hf_gamma (float): HF market maker gamma
                 - dpx_adjustment (float): Decimal price adjustment
                 - dt_touch_adjustment (float): Touch adjustment
-                - fv_type (str): Fundamental value type (default: "historical_trd")
                 - cal_param_hash (str): Calibration parameter hash
                 
         Returns:

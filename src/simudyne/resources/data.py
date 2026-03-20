@@ -1,4 +1,4 @@
-AVAILABLE_PATH = "/data/available"
+AVAILABLE_PATH = "/simulation/data/available"
 
 
 class DataResource:
