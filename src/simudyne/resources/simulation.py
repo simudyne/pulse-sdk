@@ -16,6 +16,7 @@ import io
 RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
+CALIBRATE_PATH = "/calibrate"
 
 # Available market scenarios
 SCENARIOS = {
@@ -201,6 +202,41 @@ class SimulationResource:
         payload.update(kwargs)
         
         return self._client._request("POST", RUN_PATH, json=payload)
+
+    def calibrate(
+        self,
+        symbol: str,
+        cal_date: str,
+        simulations: int = None,
+        batch_size: int = None,
+        optimize_adj_params: bool = True,
+    ):
+        """
+        Trigger model calibration for a symbol and date.
+
+        Calibration runs asynchronously to fit model parameters to observed
+        market data for the given symbol and date.
+
+        Args:
+            symbol: Trading symbol (e.g., "9999.HK")
+            cal_date: Calibration date in YYYY-MM-DD format
+            simulations: Number of simulations to run during calibration
+            batch_size: Batch size for calibration runs
+            optimize_adj_params: Whether to optimise adjustment parameters (default: True)
+
+        Returns:
+            dict: Calibration job submission result
+        """
+        payload: dict = {
+            "symbol": symbol,
+            "cal_date": cal_date,
+            "optimize_adj_params": optimize_adj_params,
+        }
+        if simulations is not None:
+            payload["simulations"] = simulations
+        if batch_size is not None:
+            payload["batch_size"] = batch_size
+        return self._client._request("POST", CALIBRATE_PATH, json=payload)
 
     def get_jobs(self):
         """
