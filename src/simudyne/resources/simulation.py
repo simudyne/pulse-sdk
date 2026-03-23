@@ -16,6 +16,8 @@ import io
 RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
+AVAILABLE_PATH = "/simulation/data/available"
+CALIBRATE_PATH = "/calibrate"
 
 # Available market scenarios
 SCENARIOS = {
@@ -90,6 +92,45 @@ class SimulationResource:
     def __init__(self, client):
         self._client = client
 
+    def calibrate(
+        self,
+        symbol: str,
+        cal_date: str,
+        simulations: int = None,
+        batch_size: int = None,
+        optimize_adj_params: bool = True,
+    ):
+        """Trigger a model calibration run for a symbol and date.
+
+        Starts the calibration process on the server as a background task.
+        The server will run the Chiarella surrogate model calibration and
+        write the resulting parameters to the calibration_params table.
+
+        Args:
+            symbol: Trading symbol (e.g., "9999.HK")
+            cal_date: Calibration date in YYYY-MM-DD format
+            simulations: Number of simulations to run during calibration
+            batch_size: Batch size for calibration runs
+            optimize_adj_params: Whether to optimise adjustment parameters (default True)
+
+        Returns:
+            dict: Contains status, symbol, and cal_date confirming the job was queued.
+
+        Example:
+            >>> client.simulation.calibrate(symbol="9999.HK", cal_date="2025-09-01")
+            {'status': 'calibration_queued', 'symbol': '9999.HK', 'cal_date': '2025-09-01'}
+        """
+        payload = {
+            "symbol": symbol,
+            "cal_date": cal_date,
+            "optimize_adj_params": optimize_adj_params,
+        }
+        if simulations is not None:
+            payload["simulations"] = simulations
+        if batch_size is not None:
+            payload["batch_size"] = batch_size
+        return self._client._request("POST", CALIBRATE_PATH, json=payload)
+
     def run(
         self,
         symbol: str,
@@ -141,7 +182,6 @@ class SimulationResource:
                 - mt_hf_gamma (float): HF market maker gamma
                 - dpx_adjustment (float): Decimal price adjustment
                 - dt_touch_adjustment (float): Touch adjustment
-                - fv_type (str): Fundamental value type (default: "historical_trd")
                 - cal_param_hash (str): Calibration parameter hash
                 
         Returns:

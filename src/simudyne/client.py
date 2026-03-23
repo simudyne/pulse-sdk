@@ -25,13 +25,11 @@ class PulseABM:
         from simudyne.resources.profile import ProfileResource
         from simudyne.resources.api_keys import ApiKeysResource
         from simudyne.resources.data import DataResource
-        from simudyne.resources.historical import HistoricalResource
         from simudyne.resources.simulation import SimulationResource
 
         self.profile = ProfileResource(self)
         self.api_keys = ApiKeysResource(self)
         self.data = DataResource(self)
-        self.historical = HistoricalResource(self)
         self.simulation = SimulationResource(self)
 
     def _request(self, method:str,endpoint:str, **kwargs):
