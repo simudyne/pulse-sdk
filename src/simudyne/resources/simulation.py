@@ -97,11 +97,9 @@ class SimulationResource:
         cal_date: str,
         n_runs: int = 100,
         seed: int = 42,
-        step_size: int = 20000,
         scenario: str = "normal",
         scenario_params: dict = None,
         exec_algos: list = None,
-        **kwargs
     ):
         """
         Submit a simulation run to be executed asynchronously.
@@ -115,7 +113,6 @@ class SimulationResource:
             cal_date: Calibration date in YYYY-MM-DD format (e.g., "2025-09-01")
             n_runs: Number of independent Monte Carlo runs (default: 100)
             seed: Master random seed for reproducibility (default: 42)
-            step_size: Simulation step size in microseconds (default: 20000)
             scenario: Market scenario to simulate. Options:
                 - "normal": No scenario injection (default)
                 - "flash_crash": Large rapid SELL depleting bid-side liquidity
@@ -128,22 +125,19 @@ class SimulationResource:
                 - order_size_ratio (float): Child order size as fraction of liquidity
                 - order_freq (str): Child order spacing (e.g., "500ms", "5s", "30s")
                 - start_time (str): Time to begin orders (e.g., "10:30:00")
-            exec_algos: List of execution algorithm configs. Each dict must have "type"
-                and algo-specific parameters. Supported types:
+            exec_algos: List of execution algorithm configs. Each dict must have "type".
+                Supported types:
                 - "twap": Time-weighted average price
-                - "vwap": Volume-weighted average price
-                See documentation for full parameter list.
-            **kwargs: Additional model parameters:
-                - p_sigma (float): Price noise sigma
-                - ft_kappa (float): Fundamental trader mean-reversion speed
-                - mt_beta (float): Market maker beta
-                - mt_gamma (float): Market maker gamma
-                - mt_hf_beta (float): HF market maker beta
-                - mt_hf_gamma (float): HF market maker gamma
-                - dpx_adjustment (float): Decimal price adjustment
-                - dt_touch_adjustment (float): Touch adjustment
-                - fv_type (str): Fundamental value type (default: "historical_trd")
-                - cal_param_hash (str): Calibration parameter hash
+                - "vwap": Volume-weighted average price  
+                - "css": Custom static schedule
+                Common parameters:
+                - order_size (int): Total volume to execute (twap/vwap)
+                - horizon (timedelta): Execution window duration (twap/vwap)
+                - orders (pd.Series): Order schedule indexed by datetime (css)
+                - start_time (time): Start time, defaults to market open
+                - frequency (timedelta): Order frequency, default 1 second
+                - side (str): "buy" or "sell", inferred from order_size if omitted
+                - random_offset (bool/timedelta): Randomize order times, default True
                 
         Returns:
             dict: Submission result containing:
@@ -190,7 +184,6 @@ class SimulationResource:
             "cal_date": cal_date,
             "n_runs": n_runs,
             "seed": seed,
-            "step_size": step_size,
             "scenario": scenario,
         }
         
@@ -198,8 +191,6 @@ class SimulationResource:
             payload["scenario_params"] = scenario_params
         if exec_algos:
             payload["exec_algos"] = exec_algos
-            
-        payload.update(kwargs)
         
         return self._client._request("POST", RUN_PATH, json=payload)
 
