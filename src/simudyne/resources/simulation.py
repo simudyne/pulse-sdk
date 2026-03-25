@@ -16,6 +16,7 @@ import io
 RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
+CACHED_PATH = "/simulation/cached"
 CALIBRATE_PATH = "/calibrate"
 
 # Available market scenarios
@@ -465,3 +466,126 @@ class SimulationResource:
             raise Exception(f"API Error ({response.status_code}): {detail}")
         
         return pl.read_parquet(io.BytesIO(response.content))
+
+    def list_cached(
+        self,
+        symbol: str = None,
+        date: str = None,
+        scenario: str = None,
+    ):
+        """
+        List cached baseline simulations available to free tier users.
+        
+        Returns aggregated simulation metadata for baseline (non-exec algo) simulations.
+        Use the returned sim_id to retrieve data via get_sim_data(), get_sim_params(), etc.
+        
+        Free tier users can only access baseline simulations - no execution algorithms.
+        
+        Args:
+            symbol: Filter by symbol (e.g., "700.HK", "9999.HK")
+            date: Filter by date (e.g., "2025-09-02")
+            scenario: Filter by scenario (e.g., "normal", "flash_crash")
+            
+        Returns:
+            dict: Contains:
+                - simulations (list): List of cached simulation groups, each with:
+                    - example_sim_id (str): A sim_id from this group (use with get_sim_data)
+                    - symbol (str): Trading symbol
+                    - date (str): Calibration date
+                    - scenario (str): Scenario name
+                    - n_runs (int): Number of available runs
+                    - cal_hash (str): Calibration parameter hash
+                    - sim_hash (str): Simulation parameter hash
+                    - time_range (str): Trading time range
+                - total (int): Number of unique symbol/date/scenario combinations
+                
+        Example - List all cached simulations:
+            >>> cached = client.simulation.list_cached()
+            >>> print(f"Found {cached['total']} cached simulation groups")
+            >>> 
+            >>> for sim in cached["simulations"]:
+            ...     print(f"{sim['symbol']} {sim['date']} {sim['scenario']}: {sim['n_runs']} runs")
+            ...     print(f"  Use sim_id: {sim['example_sim_id']}")
+            
+        Example - Filter by symbol:
+            >>> cached = client.simulation.list_cached(symbol="700.HK")
+            >>> for sim in cached["simulations"]:
+            ...     print(f"{sim['date']} {sim['scenario']}: {sim['n_runs']} runs")
+            
+        Example - Get data from a cached simulation:
+            >>> cached = client.simulation.list_cached(symbol="9999.HK", scenario="flash_crash")
+            >>> if cached["simulations"]:
+            ...     sim_id = cached["simulations"][0]["example_sim_id"]
+            ...     df = client.simulation.get_sim_data(sim_id)
+            ...     print(df.head())
+        """
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        if date:
+            params["date"] = date
+        if scenario:
+            params["scenario"] = scenario
+        
+        return self._client._request("GET", CACHED_PATH, params=params)
+
+    def get_bulk_data(
+        self,
+        sim_ids: list,
+        include_sim_data: bool = True,
+        include_mid_price: bool = False,
+    ):
+        """
+        Download data for multiple simulations as a ZIP file.
+        
+        Args:
+            sim_ids: List of simulation IDs to download
+            include_sim_data: Include sim_data.parquet files (default: True)
+            include_mid_price: Include mid_price_by_min.parquet files (default: False)
+            
+        Returns:
+            bytes: ZIP file content containing requested parquet files
+            
+        Example - Download sim_data for multiple sims:
+            >>> cached = client.simulation.list_cached(symbol="700.HK")
+            >>> sim_ids = [s["example_sim_id"] for s in cached["simulations"]]
+            >>> 
+            >>> zip_bytes = client.simulation.get_bulk_data(sim_ids)
+            >>> with open("simulation_data.zip", "wb") as f:
+            ...     f.write(zip_bytes)
+            
+        Example - Download both sim_data and mid_price:
+            >>> zip_bytes = client.simulation.get_bulk_data(
+            ...     sim_ids=["sim_id_1", "sim_id_2"],
+            ...     include_sim_data=True,
+            ...     include_mid_price=True
+            ... )
+            
+        Example - Extract and load into DataFrames:
+            >>> import zipfile
+            >>> import polars as pl
+            >>> 
+            >>> zip_bytes = client.simulation.get_bulk_data(sim_ids)
+            >>> with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            ...     for name in zf.namelist():
+            ...         if name.endswith('.parquet'):
+            ...             df = pl.read_parquet(io.BytesIO(zf.read(name)))
+            ...             print(f"{name}: {df.shape}")
+        """
+        payload = {
+            "sim_ids": sim_ids,
+            "include_sim_data": include_sim_data,
+            "include_mid_price": include_mid_price,
+        }
+        
+        url = f"{self._client.base_url}{RESULTS_PATH}/bulk"
+        response = self._client.session.post(url, json=payload)
+        
+        if not response.ok:
+            try:
+                detail = response.json().get("detail", response.text)
+            except ValueError:
+                detail = response.text
+            raise Exception(f"API Error ({response.status_code}): {detail}")
+        
+        return response.content
