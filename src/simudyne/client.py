@@ -11,7 +11,7 @@ import math
 
 
 class PulseABM:
-    DEFAULT_BASE_URL = "https://simudyne-api-api-pod-dev.apps.c1h9x4c3s0q9y4u.4bmp.p2.openshiftapps.com"
+    DEFAULT_BASE_URL = "https://app-dev.pulse.simudyne.com"
 
     def __init__(self, api_key: str = None, base_url: str = None):
         
@@ -26,11 +26,13 @@ class PulseABM:
         from simudyne.resources.api_keys import ApiKeysResource
         from simudyne.resources.data import DataResource
         from simudyne.resources.simulation import SimulationResource
+        from simudyne.resources.simulator_gym import SimulatorGymResource
 
         self.profile = ProfileResource(self)
         self.api_keys = ApiKeysResource(self)
         self.data = DataResource(self)
         self.simulation = SimulationResource(self)
+        self.simulator_gym = SimulatorGymResource(self)
 
     def _request(self, method:str,endpoint:str, **kwargs):
         url = f"{self.base_url}{endpoint}"
