@@ -11,7 +11,7 @@ import math
 
 
 class PulseABM:
-    DEFAULT_BASE_URL = "https://app-dev.pulse.simudyne.com"
+    DEFAULT_BASE_URL = "https://pulse-api.simudyne.com"
 
     def __init__(self, api_key: str = None, base_url: str = None):
         
