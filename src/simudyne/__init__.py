@@ -1,3 +1,3 @@
-from simudyne.client import PulseABM
+from simudyne.client import PulseABM, PulseAPIError
 
-__all__ = ["PulseABM"]
+__all__ = ["PulseABM", "PulseAPIError"]
