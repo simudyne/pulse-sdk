@@ -82,8 +82,11 @@ class SimulatorGymResource:
                     obs = env.reset(seed=42)
                     result = env.step(0)
         """
-        ws_url = f"{self._ws_base_url()}/ws/simulator-gym?api_key={self._client.api_key}"
-        ws = websocket.create_connection(ws_url)
+        ws_url = f"{self._ws_base_url()}/ws/simulator-gym"
+        ws = websocket.create_connection(
+            ws_url,
+            header={"X-API-Key": self._client.api_key},
+        )
 
         ws.send(json.dumps({
             "type": "create",

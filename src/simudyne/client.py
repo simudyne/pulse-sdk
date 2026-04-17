@@ -21,6 +21,7 @@ class PulseABM:
         self.base_url = base_url or os.getenv("SIMUDYNE_BASE_URL", self.DEFAULT_BASE_URL)
         self.session = requests.Session()
         self.session.headers.update({"X-API-Key": self.api_key})
+        self.session.verify = True
 
         from simudyne.resources.profile import ProfileResource
         from simudyne.resources.api_keys import ApiKeysResource
