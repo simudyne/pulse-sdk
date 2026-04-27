@@ -187,13 +187,26 @@ class SimulationResource:
             "seed": seed,
             "scenario": scenario,
         }
-        
+
         if scenario_params:
             payload["scenario_params"] = scenario_params
         if exec_algos:
-            payload["exec_algos"] = exec_algos
-        
+            payload["exec_algos"] = self._serialize_exec_algos(exec_algos)
+
         return self._client._request("POST", RUN_PATH, json=payload)
+
+    @staticmethod
+    def _serialize_exec_algos(exec_algos: list) -> list:
+        """Convert pd.Series orders in CSS configs to JSON-serializable dicts."""
+        result = []
+        for algo in exec_algos:
+            algo = dict(algo)
+            if algo.get("type") == "css" and "orders" in algo:
+                orders = algo["orders"]
+                if hasattr(orders, "items"):
+                    algo["orders"] = {str(k): int(v) for k, v in orders.items()}
+            result.append(algo)
+        return result
 
     def calibrate(
         self,
