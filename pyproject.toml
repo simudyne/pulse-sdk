@@ -34,3 +34,9 @@ Repository = "https://github.com/simudyne/pulse-api"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "main"
+changelog_file = "CHANGELOG.md"
+build_command = "pip install build && python -m build"
