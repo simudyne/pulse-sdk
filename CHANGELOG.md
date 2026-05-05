@@ -1,6 +1,9 @@
 # CHANGELOG
 
 
+## v0.1.2 (2026-05-05)
+
+
 ## v0.1.1 (2026-05-05)
 
 ### Bug Fixes
@@ -13,6 +16,9 @@
 
 - Error logging
   ([`806720d`](https://github.com/simudyne/pulse-sdk/commit/806720d09058050749e5b0b98d3f899d9db25b11))
+
+- Resolve build failure and clean up release workflow
+  ([`40f5fb4`](https://github.com/simudyne/pulse-sdk/commit/40f5fb47d6c81d27eba27d352d935d0fdb4d9c85))
 
 - Serialise the exec_algo params
   ([`05cf196`](https://github.com/simudyne/pulse-sdk/commit/05cf196c43e2d477f73f71623e501fa469385c15))
