@@ -7,7 +7,7 @@ name = "simudyne"
 version = "0.1.0"
 description = "Python SDK for the Simudyne Pulse synthetic market data API"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Simudyne", email = "support@simudyne.com" },
