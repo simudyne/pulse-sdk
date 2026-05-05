@@ -66,13 +66,6 @@ SCENARIO_DEFAULTS = {
 }
 
 
-_PRO_TIER_HINT = (
-    "This endpoint requires a pro or enterprise subscription. "
-    "Free tier users can browse pre-run simulations with client.simulation.list_cached(). "
-    "Upgrade at https://pulse.simudyne.com/docs/tiers"
-)
-
-
 class SimulationResource:
     """
     Run agent-based market simulations and track job status.
@@ -102,13 +95,8 @@ class SimulationResource:
         self._client = client
 
     def _pro_request(self, method: str, endpoint: str, **kwargs):
-        """Wrapper around _client._request that surfaces tier errors clearly."""
-        try:
-            return self._client._request(method, endpoint, **kwargs)
-        except PulseAPIError as e:
-            if e.status_code == 403:
-                raise PulseAPIError(e.status_code, f"{e.detail} {_PRO_TIER_HINT}") from e
-            raise
+        """Wrapper for pro-only endpoints — passes errors through from the server."""
+        return self._client._request(method, endpoint, **kwargs)
 
     def run(
         self,
@@ -211,15 +199,7 @@ class SimulationResource:
         if exec_algos:
             payload["exec_algos"] = self._serialize_exec_algos(exec_algos)
 
-        try:
-            return self._pro_request("POST", RUN_PATH, json=payload)
-        except PulseAPIError as e:
-            if e.status_code in (400, 422):
-                raise PulseAPIError(
-                    e.status_code,
-                    f"{e.detail} — use client.data.get_available_symbols() to see available symbols and dates.",
-                ) from e
-            raise
+        return self._pro_request("POST", RUN_PATH, json=payload)
 
     @staticmethod
     def _serialize_exec_algos(exec_algos: list) -> list:
@@ -451,15 +431,7 @@ class SimulationResource:
             >>> params = client.simulation.get_sim_params(sim_id)
             >>> print(f"Scenario: {params['scenario_params']['scenario_name']}")
         """
-        try:
-            return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/params")
-        except PulseAPIError as e:
-            if e.status_code == 404:
-                raise PulseAPIError(
-                    e.status_code,
-                    f"{e.detail} — use client.simulation.list_sim_files('{sim_id}') to see what files are available.",
-                ) from e
-            raise
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/params")
 
     def get_sim_metrics(self, sim_id: str):
         """
@@ -475,15 +447,7 @@ class SimulationResource:
             >>> metrics = client.simulation.get_sim_metrics(sim_id)
             >>> print(metrics)
         """
-        try:
-            return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
-        except PulseAPIError as e:
-            if e.status_code == 404:
-                raise PulseAPIError(
-                    e.status_code,
-                    f"{e.detail} — use client.simulation.list_sim_files('{sim_id}') to see what files are available.",
-                ) from e
-            raise
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
 
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """
@@ -518,11 +482,6 @@ class SimulationResource:
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
-            if response.status_code == 404:
-                raise PulseAPIError(
-                    response.status_code,
-                    f"{detail} — use client.simulation.list_sim_files('{sim_id}') to see what files are available.",
-                )
             raise PulseAPIError(response.status_code, detail)
 
         return pl.read_parquet(io.BytesIO(response.content))
