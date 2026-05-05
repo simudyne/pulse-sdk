@@ -1,0 +1,49 @@
+name: API Sync Check
+
+on:
+  repository_dispatch:
+    types: [api-released]
+
+permissions:
+  issues: write
+
+jobs:
+  open-sync-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure sync label exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "sync" \
+            --color "0075ca" \
+            --description "API compatibility check" \
+            --repo ${{ github.repository }} 2>/dev/null || true
+
+      - name: Create compatibility check issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_VERSION: ${{ github.event.client_payload.api_version }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "API v${API_VERSION} released — verify SDK compatibility" \
+            --label "sync" \
+            --body "## API v${API_VERSION} released
+
+          A new version of the Pulse API has been released. Verify the SDK is still compatible and update if needed.
+
+          **API release:** https://github.com/simudyne/pulse-api-pod/releases/tag/v${API_VERSION}
+
+          ### Checklist
+
+          - [ ] Simulation endpoints — \`/simulation/run\`, \`/simulation/jobs\`, \`/simulation/results/*\`
+          - [ ] Data endpoints — \`/data/available-symbols\`
+          - [ ] Profile endpoints — \`/profile\`, \`/profile/usage\`
+          - [ ] API key endpoints — \`/api-keys\`
+          - [ ] Calibration endpoints — \`/calibrate\`
+          - [ ] Simulator gym WebSocket — \`/ws/simulator-gym\`
+          - [ ] Request/response shapes unchanged (or SDK updated to match)
+          - [ ] If SDK changes were needed: commit with \`feat:\` or \`fix:\` to trigger a release
+
+          _Opened automatically when pulse-api-pod v${API_VERSION} was released._"
