@@ -83,10 +83,20 @@ class SimulatorGymResource:
                     result = env.step(0)
         """
         ws_url = f"{self._ws_base_url()}/ws/simulator-gym"
-        ws = websocket.create_connection(
-            ws_url,
-            header={"X-API-Key": self._client.api_key},
-        )
+        try:
+            ws = websocket.create_connection(
+                ws_url,
+                header={"X-API-Key": self._client.api_key},
+            )
+        except websocket.WebSocketBadStatusException as e:
+            if "403" in str(e):
+                raise RuntimeError(
+                    "Authentication failed: invalid or expired API key. "
+                    "Check your API key with client.api_keys.list()."
+                ) from e
+            raise RuntimeError(f"Failed to connect to simulator-gym: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to connect to simulator-gym: {e}") from e
 
         ws.send(json.dumps({
             "type": "create",

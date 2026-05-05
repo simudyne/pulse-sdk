@@ -13,6 +13,8 @@ Workflow:
 
 import io
 
+from simudyne.exceptions import PulseAPIError
+
 RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
@@ -64,6 +66,13 @@ SCENARIO_DEFAULTS = {
 }
 
 
+_PRO_TIER_HINT = (
+    "This endpoint requires a pro or enterprise subscription. "
+    "Free tier users can browse pre-run simulations with client.simulation.list_cached(). "
+    "Upgrade at https://pulse.simudyne.com/docs/tiers"
+)
+
+
 class SimulationResource:
     """
     Run agent-based market simulations and track job status.
@@ -91,6 +100,15 @@ class SimulationResource:
     
     def __init__(self, client):
         self._client = client
+
+    def _pro_request(self, method: str, endpoint: str, **kwargs):
+        """Wrapper around _client._request that surfaces tier errors clearly."""
+        try:
+            return self._client._request(method, endpoint, **kwargs)
+        except PulseAPIError as e:
+            if e.status_code == 403:
+                raise PulseAPIError(e.status_code, f"{e.detail} {_PRO_TIER_HINT}") from e
+            raise
 
     def run(
         self,
@@ -193,7 +211,15 @@ class SimulationResource:
         if exec_algos:
             payload["exec_algos"] = self._serialize_exec_algos(exec_algos)
 
-        return self._client._request("POST", RUN_PATH, json=payload)
+        try:
+            return self._pro_request("POST", RUN_PATH, json=payload)
+        except PulseAPIError as e:
+            if e.status_code in (400, 422):
+                raise PulseAPIError(
+                    e.status_code,
+                    f"{e.detail} — use client.data.get_available_symbols() to see available symbols and dates.",
+                ) from e
+            raise
 
     @staticmethod
     def _serialize_exec_algos(exec_algos: list) -> list:
@@ -241,7 +267,7 @@ class SimulationResource:
             payload["simulations"] = simulations
         if batch_size is not None:
             payload["batch_size"] = batch_size
-        return self._client._request("POST", CALIBRATE_PATH, json=payload)
+        return self._pro_request("POST", CALIBRATE_PATH, json=payload)
 
     def get_jobs(self):
         """
@@ -266,7 +292,7 @@ class SimulationResource:
             ...     print(f"Job {job['job_id']}: {len(job['sim_ids'])} simulations")
             ...     print(f"  Created: {job['created_at']}")
         """
-        return self._client._request("GET", JOBS_PATH)
+        return self._pro_request("GET", JOBS_PATH)
 
     def get_job_status(self, job_id: str):
         """
@@ -318,7 +344,7 @@ class SimulationResource:
             ...     
             ...     time.sleep(30)  # Check every 30 seconds
         """
-        return self._client._request("GET", f"{JOBS_PATH}/{job_id}/status")
+        return self._pro_request("GET", f"{JOBS_PATH}/{job_id}/status")
     
     @staticmethod
     def list_scenarios():
@@ -380,7 +406,7 @@ class SimulationResource:
             ...     if sim["status"] == "completed":
             ...         print(f"{sim['sim_id']}: {sim['metrics']}")
         """
-        return self._client._request("GET", f"{JOBS_PATH}/{job_id}/results")
+        return self._pro_request("GET", f"{JOBS_PATH}/{job_id}/results")
 
     def list_sim_files(self, sim_id: str):
         """
@@ -425,7 +451,15 @@ class SimulationResource:
             >>> params = client.simulation.get_sim_params(sim_id)
             >>> print(f"Scenario: {params['scenario_params']['scenario_name']}")
         """
-        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/params")
+        try:
+            return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/params")
+        except PulseAPIError as e:
+            if e.status_code == 404:
+                raise PulseAPIError(
+                    e.status_code,
+                    f"{e.detail} — use client.simulation.list_sim_files('{sim_id}') to see what files are available.",
+                ) from e
+            raise
 
     def get_sim_metrics(self, sim_id: str):
         """
@@ -441,7 +475,15 @@ class SimulationResource:
             >>> metrics = client.simulation.get_sim_metrics(sim_id)
             >>> print(metrics)
         """
-        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
+        try:
+            return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
+        except PulseAPIError as e:
+            if e.status_code == 404:
+                raise PulseAPIError(
+                    e.status_code,
+                    f"{e.detail} — use client.simulation.list_sim_files('{sim_id}') to see what files are available.",
+                ) from e
+            raise
 
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """
@@ -470,14 +512,19 @@ class SimulationResource:
         
         url = f"{self._client.base_url}{RESULTS_PATH}/{sim_id}/data/{filename}"
         response = self._client.session.get(url)
-        
+
         if not response.ok:
             try:
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
-            raise Exception(f"API Error ({response.status_code}): {detail}")
-        
+            if response.status_code == 404:
+                raise PulseAPIError(
+                    response.status_code,
+                    f"{detail} — use client.simulation.list_sim_files('{sim_id}') to see what files are available.",
+                )
+            raise PulseAPIError(response.status_code, detail)
+
         return pl.read_parquet(io.BytesIO(response.content))
 
     def list_cached(
@@ -593,12 +640,12 @@ class SimulationResource:
         
         url = f"{self._client.base_url}{RESULTS_PATH}/bulk"
         response = self._client.session.post(url, json=payload)
-        
+
         if not response.ok:
             try:
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
-            raise Exception(f"API Error ({response.status_code}): {detail}")
-        
+            raise PulseAPIError(response.status_code, detail)
+
         return response.content
