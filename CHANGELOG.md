@@ -1,12 +1,20 @@
 # CHANGELOG
 
 
+## v0.2.0 (2026-05-14)
+
+
 ## v0.1.3 (2026-05-05)
 
 ### Bug Fixes
 
 - Error logging
   ([`7b488b0`](https://github.com/simudyne/pulse-sdk/commit/7b488b0cff6b53194cd93992c62e78e83e678b9b))
+
+### Features
+
+- Add l2_by_second parquets
+  ([`51d6d2a`](https://github.com/simudyne/pulse-sdk/commit/51d6d2ac81327037e520bdd621797e9231755850))
 
 
 ## v0.1.2 (2026-05-05)
