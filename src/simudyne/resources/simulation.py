@@ -391,10 +391,10 @@ class SimulationResource:
     def list_sim_files(self, sim_id: str):
         """
         List available files for a specific simulation.
-        
+
         Args:
             sim_id: The simulation ID
-            
+
         Returns:
             dict: Contains:
                 - sim_id (str): The simulation identifier
@@ -403,9 +403,10 @@ class SimulationResource:
                 - has_params (bool): Whether params.json exists
                 - has_results (bool): Whether results.json exists
                 - has_mid_price (bool): Whether mid_price_by_min.parquet exists
+                - has_l2_by_second (bool): Whether l2_by_second.parquet exists
                 - has_exec_schedule (bool): Whether exec_schedule.parquet exists
                 - has_schedule_by_min (bool): Whether schedule_by_min.parquet exists
-                
+
         Example:
             >>> files = client.simulation.list_sim_files(sim_id)
             >>> print(f"Available: {files['files']}")
@@ -452,15 +453,17 @@ class SimulationResource:
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """
         Download simulation data as a Polars DataFrame.
-        
+
         Args:
             sim_id: The simulation ID
             filename: File to download. Options:
                 - "sim_data.parquet": Full simulation output (LOB + orders)
                 - "mid_price_by_min.parquet": Mid-price by minute
+                - "l2_by_second.parquet": L2 order book (10 levels) sampled per second
                 - "exec_schedule.parquet": Execution schedule (if algo)
                 - "schedule_by_min.parquet": Algo schedule by minute (if algo)
-                
+                - "exec_results.parquet": Execution cost metrics (if algo)
+
         Returns:
             polars.DataFrame: The simulation data
             
@@ -553,37 +556,39 @@ class SimulationResource:
         sim_ids: list,
         include_sim_data: bool = True,
         include_mid_price: bool = False,
+        include_l2_by_second: bool = False,
     ):
         """
         Download data for multiple simulations as a ZIP file.
-        
+
         Args:
             sim_ids: List of simulation IDs to download
             include_sim_data: Include sim_data.parquet files (default: True)
             include_mid_price: Include mid_price_by_min.parquet files (default: False)
-            
+            include_l2_by_second: Include l2_by_second.parquet files (default: False)
+
         Returns:
             bytes: ZIP file content containing requested parquet files
-            
+
         Example - Download sim_data for multiple sims:
             >>> cached = client.simulation.list_cached(symbol="700.HK")
             >>> sim_ids = [s["example_sim_id"] for s in cached["simulations"]]
-            >>> 
+            >>>
             >>> zip_bytes = client.simulation.get_bulk_data(sim_ids)
             >>> with open("simulation_data.zip", "wb") as f:
             ...     f.write(zip_bytes)
-            
-        Example - Download both sim_data and mid_price:
+
+        Example - Download with L2 order book data:
             >>> zip_bytes = client.simulation.get_bulk_data(
             ...     sim_ids=["sim_id_1", "sim_id_2"],
             ...     include_sim_data=True,
-            ...     include_mid_price=True
+            ...     include_l2_by_second=True
             ... )
-            
+
         Example - Extract and load into DataFrames:
             >>> import zipfile
             >>> import polars as pl
-            >>> 
+            >>>
             >>> zip_bytes = client.simulation.get_bulk_data(sim_ids)
             >>> with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             ...     for name in zf.namelist():
@@ -595,6 +600,7 @@ class SimulationResource:
             "sim_ids": sim_ids,
             "include_sim_data": include_sim_data,
             "include_mid_price": include_mid_price,
+            "include_l2_by_second": include_l2_by_second,
         }
         
         url = f"{self._client.base_url}{RESULTS_PATH}/bulk"
