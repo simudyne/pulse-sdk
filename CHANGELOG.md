@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.3.0 (2026-06-02)
+
+### Documentation
+
+- Fix exec_algos documentation to match actual API
+  ([`fe22ee8`](https://github.com/simudyne/pulse-sdk/commit/fe22ee8e1db47e6acc312c5fbd8e59d12752d744))
+
+- Changed `horizon (timedelta)` to `horizon: SECONDS` (int) - Documented order_size sign convention:
+  negative=buy, positive=sell - Fixed example: `horizon_mins: 60` → `horizon: 3600` - Added buy
+  order example
+
+Addresses UAT issues #2 (kwarg mismatch) and #5 (sign convention).
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+### Features
+
+- Adding validation endpoints to the SDK
+  ([`d5e6708`](https://github.com/simudyne/pulse-sdk/commit/d5e6708c2ef2947ce959089a5cb44a82899cf9e4))
+
+
 ## v0.2.0 (2026-05-14)
 
 
