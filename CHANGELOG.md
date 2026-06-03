@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.4.1 (2026-06-03)
+
+### Bug Fixes
+
+- Add rescale_volumes and lot_size to run_pipeline
+  ([`890c47f`](https://github.com/simudyne/pulse-sdk/commit/890c47ff87382aa06de5feafe3c52772927fa573))
+
+
 ## v0.4.0 (2026-06-03)
 
 ### Features
