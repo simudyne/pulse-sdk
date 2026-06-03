@@ -115,6 +115,8 @@ class ValidationResource:
         run_impact: bool = False,
         run_fid: bool = False,
         n_levels: int = 10,
+        rescale_volumes: bool = True,
+        lot_size: int = 1,
         poll_interval: float = 3.0,
         timeout: float = 600.0,
     ) -> dict:
@@ -132,6 +134,8 @@ class ValidationResource:
             run_impact: Compute impact response curves
             run_fid: Compute Frechet Inception Distance
             n_levels: Number of L2 book levels to use
+            rescale_volumes: Multiply simulated L2 size columns by lot_size
+            lot_size: Lot size multiplier for volume rescaling
             poll_interval: Seconds between status checks (default 3)
             timeout: Max seconds to wait (default 600)
 
@@ -144,7 +148,6 @@ class ValidationResource:
         """
         import sys
 
-
         job = self.run(
             symbol=symbol,
             date=date,
@@ -154,6 +157,8 @@ class ValidationResource:
             run_impact=run_impact,
             run_fid=run_fid,
             n_levels=n_levels,
+            rescale_volumes=rescale_volumes,
+            lot_size=lot_size,
         )
         job_id = job["job_id"]
         print(f"Validation job submitted: {job_id}", file=sys.stderr)
