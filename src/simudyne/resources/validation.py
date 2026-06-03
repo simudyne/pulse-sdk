@@ -180,19 +180,55 @@ class ValidationResource:
 
             time.sleep(poll_interval)
 
-    def display_plots(self, result: dict):
-        """Display validation plots inline in a Jupyter notebook.
+    def display_plots(self, result: dict) -> "PlotDisplay":
+        """Return a PlotDisplay object for displaying validation plots.
+
+        Usage:
+            plots = client.validation.display_plots(result)
+            plots.distributions()    # show distribution histograms
+            plots.distances()        # show spider plots
+            plots.impact_response()  # show impact response plots
 
         Args:
             result: The result dict from run_pipeline() or get_job()
         """
+        return PlotDisplay(result)
+
+
+class PlotDisplay:
+    """Displays categorized validation plots inline in Jupyter notebooks."""
+
+    def __init__(self, result: dict):
+        plots = result.get("plots") or {}
+        self._distributions = plots.get("distributions", [])
+        self._distances = plots.get("distances", [])
+        self._impact_response = plots.get("impact_response", [])
+
+    def _show(self, plot_list, title):
         from IPython.display import display, Image
 
-        plots = result.get("plots", [])
-        if not plots:
-            print("No plots in result")
+        if not plot_list:
+            print(f"No {title} plots available")
             return
 
-        for plot in plots:
+        for plot in plot_list:
             print(f"\n--- {plot['name']} ---")
             display(Image(data=base64.b64decode(plot["content_base64"])))
+
+    def distributions(self):
+        """Display distribution histogram plots."""
+        self._show(self._distributions, "distribution")
+
+    def distances(self):
+        """Display spider plots (L1 and Wasserstein distances)."""
+        self._show(self._distances, "distance")
+
+    def impact_response(self):
+        """Display impact response plots."""
+        self._show(self._impact_response, "impact response")
+
+    def all(self):
+        """Display all plots."""
+        self.distances()
+        self.distributions()
+        self.impact_response()
