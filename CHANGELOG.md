@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-06-03)
+
+### Features
+
+- Change naming of val function
+  ([`1302a4c`](https://github.com/simudyne/pulse-sdk/commit/1302a4caf945aacff02c94c95c7ddf7f061004a6))
+
+
 ## v0.3.0 (2026-06-02)
 
 ### Documentation
