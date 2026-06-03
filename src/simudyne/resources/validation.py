@@ -7,7 +7,7 @@ impact response analysis, and FID scores.
 
 Workflow:
     1. Submit a validation job with run() -> returns job_id
-    2. Poll status with get_job(job_id) or use run_and_wait() for blocking
+    2. Poll status with get_job(job_id) or use run_pipeline() for blocking
     3. View results including distances and plots
     4. List past jobs with list_jobs()
 """
@@ -34,6 +34,8 @@ class ValidationResource:
         run_impact: bool = False,
         run_fid: bool = False,
         n_levels: int = 10,
+        rescale_volumes: bool = True,
+        lot_size: int = 1,
     ) -> dict:
         """Submit a validation job.
 
@@ -53,6 +55,8 @@ class ValidationResource:
             run_impact: Compute impact response curves
             run_fid: Compute Frechet Inception Distance
             n_levels: Number of L2 book levels to use
+            rescale_volumes: Multiply simulated L2 size columns by lot_size
+            lot_size: Lot size multiplier for volume rescaling
 
         Returns:
             dict with job_id, status, message
@@ -67,6 +71,8 @@ class ValidationResource:
                 "run_impact": run_impact,
                 "run_fid": run_fid,
                 "n_levels": n_levels,
+                "rescale_volumes": rescale_volumes,
+                "lot_size": lot_size,
             },
         }
         return self._client._request("POST", RUN_PATH, json=payload)
@@ -99,7 +105,7 @@ class ValidationResource:
         """
         return self._client._request("GET", JOBS_PATH, params={"limit": limit})
 
-    def run_and_wait(
+    def run_pipeline(
         self,
         symbol: str,
         date: str,
@@ -172,7 +178,7 @@ class ValidationResource:
         """Display validation plots inline in a Jupyter notebook.
 
         Args:
-            result: The result dict from run_and_wait() or get_job()
+            result: The result dict from run_pipeline() or get_job()
         """
         from IPython.display import display, Image
 
