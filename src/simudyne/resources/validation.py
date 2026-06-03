@@ -144,6 +144,7 @@ class ValidationResource:
         """
         import sys
 
+
         job = self.run(
             symbol=symbol,
             date=date,
