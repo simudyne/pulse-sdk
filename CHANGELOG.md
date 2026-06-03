@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-06-03)
+
+### Features
+
+- Add PlotDisplay with distributions/distances/impact_response methods
+  ([`dc69de4`](https://github.com/simudyne/pulse-sdk/commit/dc69de435f56f5c0deabcfb68e2c526d74826032))
+
+
 ## v0.4.1 (2026-06-03)
 
 ### Bug Fixes
