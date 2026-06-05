@@ -19,6 +19,7 @@ RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
 CACHED_PATH = "/simulation/cached"
+SAMPLE_PATH = "/simulation/sample"
 CALIBRATE_PATH = "/calibrate"
 
 # Available market scenarios
@@ -550,6 +551,50 @@ class SimulationResource:
             params["scenario"] = scenario
         
         return self._client._request("GET", CACHED_PATH, params=params)
+
+    def get_sample_data(self, path: str = "simulation_sample.zip"):
+        """
+        Download a sample dataset for 700.HK — 5 Monte Carlo runs, no configuration needed.
+
+        The server picks the best available scenario (normal preferred) and returns
+        sim_data.parquet and mid_price_by_min.parquet for each run as a ZIP.
+
+        Args:
+            path: File path to save the ZIP to (default: "simulation_sample.zip").
+                  Pass None to return raw bytes instead.
+
+        Returns:
+            bytes: ZIP file content if path is None, otherwise None (file written to disk).
+
+        Example - Save to disk:
+            >>> client.simulation.get_sample_data()
+            # writes simulation_sample.zip to current directory
+
+        Example - Load directly into DataFrames:
+            >>> import zipfile, io
+            >>> import polars as pl
+            >>>
+            >>> data = client.simulation.get_sample_data(path=None)
+            >>> with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            ...     for name in zf.namelist():
+            ...         df = pl.read_parquet(io.BytesIO(zf.read(name)))
+            ...         print(f"{name}: {df.shape}")
+        """
+        url = f"{self._client.base_url}{SAMPLE_PATH}"
+        response = self._client.session.get(url)
+
+        if not response.ok:
+            try:
+                detail = response.json().get("detail", response.text)
+            except ValueError:
+                detail = response.text
+            raise PulseAPIError(response.status_code, detail)
+
+        if path is None:
+            return response.content
+
+        with open(path, "wb") as f:
+            f.write(response.content)
 
     def get_bulk_data(
         self,
