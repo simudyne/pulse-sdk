@@ -1,6 +1,9 @@
 # CHANGELOG
 
 
+## v0.5.1 (2026-06-05)
+
+
 ## v0.5.0 (2026-06-03)
 
 ### Features
@@ -47,6 +50,11 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 
 
 ## v0.2.0 (2026-05-14)
+
+### Bug Fixes
+
+- Align sample data with pulse-api-pod
+  ([`c79b372`](https://github.com/simudyne/pulse-sdk/commit/c79b372a114102a423bf78c93bffe81545d7ffad))
 
 
 ## v0.1.3 (2026-05-05)
