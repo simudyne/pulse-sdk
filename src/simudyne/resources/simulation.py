@@ -134,18 +134,19 @@ class SimulationResource:
                 - order_freq (str): Child order spacing (e.g., "500ms", "5s", "30s")
                 - start_time (str): Time to begin orders (e.g., "10:30:00")
             exec_algos: List of execution algorithm configs. Each dict must have "type".
-                Supported types:
-                - "twap": Time-weighted average price
-                - "vwap": Volume-weighted average price  
-                - "css": Custom static schedule
-                Common parameters:
-                - order_size (int): Total volume to execute (twap/vwap)
-                - horizon (timedelta): Execution window duration (twap/vwap)
-                - orders (pd.Series): Order schedule indexed by datetime (css)
-                - start_time (time): Start time, defaults to market open
-                - frequency (timedelta): Order frequency, default 1 second
-                - side (str): "buy" or "sell", inferred from order_size if omitted
-                - random_offset (bool/timedelta): Randomize order times, default True
+                Supported types: "twap", "vwap", "css"
+
+                For TWAP/VWAP:
+                - type: "twap" or "vwap" (required)
+                - order_size: Total shares. Negative = BUY, positive = SELL (required)
+                - horizon: Execution window in SECONDS, e.g. 3600 for 1 hour (required)
+                - start_time: When to start, e.g. "09:30:00" (optional, defaults to market open)
+
+                For CSS (Custom Static Schedule):
+                - type: "css" (required)
+                - orders: Dict mapping timestamps to quantities (required)
+
+                Multiple exec_algos can be submitted in one simulation.
                 
         Returns:
             dict: Submission result containing:
@@ -174,16 +175,28 @@ class SimulationResource:
             ...     }
             ... )
             
-        Example - With TWAP execution algo:
+        Example - With TWAP execution algo (sell 50k shares over 1 hour):
             >>> result = client.simulation.run(
             ...     symbol="9999.HK",
             ...     cal_date="2025-09-01",
             ...     n_runs=20,
             ...     exec_algos=[{
             ...         "type": "twap",
-            ...         "order_size": 50000,
-            ...         "horizon_mins": 60,
+            ...         "order_size": 50000,  # positive = sell
+            ...         "horizon": 3600,  # seconds (1 hour)
             ...         "start_time": "09:30:00"
+            ...     }]
+            ... )
+
+        Example - With TWAP buy order:
+            >>> result = client.simulation.run(
+            ...     symbol="9999.HK",
+            ...     cal_date="2025-09-01",
+            ...     n_runs=20,
+            ...     exec_algos=[{
+            ...         "type": "twap",
+            ...         "order_size": -50000,  # negative = buy
+            ...         "horizon": 3600
             ...     }]
             ... )
         """

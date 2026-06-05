@@ -38,12 +38,14 @@ class PulseABM:
         from simudyne.resources.data import DataResource
         from simudyne.resources.simulation import SimulationResource
         from simudyne.resources.simulator_gym import SimulatorGymResource
+        from simudyne.resources.validation import ValidationResource
 
         self.profile = ProfileResource(self)
         self.api_keys = ApiKeysResource(self)
         self.data = DataResource(self)
         self.simulation = SimulationResource(self)
         self.simulator_gym = SimulatorGymResource(self)
+        self.validation = ValidationResource(self)
 
     def _request_with_retries(self, method: str, url: str, **kwargs):
         """Execute request with timeout and exponential backoff for transient errors."""

@@ -1,12 +1,65 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-06-03)
+
+### Features
+
+- Add PlotDisplay with distributions/distances/impact_response methods
+  ([`dc69de4`](https://github.com/simudyne/pulse-sdk/commit/dc69de435f56f5c0deabcfb68e2c526d74826032))
+
+
+## v0.4.1 (2026-06-03)
+
+### Bug Fixes
+
+- Add rescale_volumes and lot_size to run_pipeline
+  ([`890c47f`](https://github.com/simudyne/pulse-sdk/commit/890c47ff87382aa06de5feafe3c52772927fa573))
+
+
+## v0.4.0 (2026-06-03)
+
+### Features
+
+- Change naming of val function
+  ([`1302a4c`](https://github.com/simudyne/pulse-sdk/commit/1302a4caf945aacff02c94c95c7ddf7f061004a6))
+
+
+## v0.3.0 (2026-06-02)
+
+### Documentation
+
+- Fix exec_algos documentation to match actual API
+  ([`fe22ee8`](https://github.com/simudyne/pulse-sdk/commit/fe22ee8e1db47e6acc312c5fbd8e59d12752d744))
+
+- Changed `horizon (timedelta)` to `horizon: SECONDS` (int) - Documented order_size sign convention:
+  negative=buy, positive=sell - Fixed example: `horizon_mins: 60` → `horizon: 3600` - Added buy
+  order example
+
+Addresses UAT issues #2 (kwarg mismatch) and #5 (sign convention).
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+
+### Features
+
+- Adding validation endpoints to the SDK
+  ([`d5e6708`](https://github.com/simudyne/pulse-sdk/commit/d5e6708c2ef2947ce959089a5cb44a82899cf9e4))
+
+
+## v0.2.0 (2026-05-14)
+
+
 ## v0.1.3 (2026-05-05)
 
 ### Bug Fixes
 
 - Error logging
   ([`7b488b0`](https://github.com/simudyne/pulse-sdk/commit/7b488b0cff6b53194cd93992c62e78e83e678b9b))
+
+### Features
+
+- Add l2_by_second parquets
+  ([`51d6d2a`](https://github.com/simudyne/pulse-sdk/commit/51d6d2ac81327037e520bdd621797e9231755850))
 
 
 ## v0.1.2 (2026-05-05)
