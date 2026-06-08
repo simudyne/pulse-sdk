@@ -70,7 +70,7 @@ class PulseABM:
                     detail = response.text
                 raise PulseAPIError(response.status_code, detail)
 
-            except requests.exceptions.Timeout as e:
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 last_exception = e
                 if attempt < self.max_retries:
                     delay = 2 ** attempt
