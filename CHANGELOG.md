@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.5.2 (2026-06-17)
+
+### Bug Fixes
+
+- Update client to catch connection errors
+  ([`e26d3bf`](https://github.com/simudyne/pulse-sdk/commit/e26d3bf4b54e8849b2cdb1f2e07a52f4e28daedc))
+
+### Documentation
+
+- **sdk**: Use provider="omd" in examples (was "hkex")
+  ([`687061b`](https://github.com/simudyne/pulse-sdk/commit/687061bc6dc2e4c74654208448c87f51341f4336))
+
+The HKEX provider was renamed to 'omd'; run()/calibrate() docstring examples now match the API's
+  valid providers.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+
 ## v0.5.1 (2026-06-05)
 
 
