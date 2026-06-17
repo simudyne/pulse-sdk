@@ -76,6 +76,8 @@ class SimulationResource:
         >>> result = client.simulation.run(
         ...     symbol="9999.HK",
         ...     cal_date="2025-09-01",
+        ...     provider="omd",
+        ...     exchange="hkex_securities",
         ...     n_runs=10,
         ...     scenario="flash_crash"
         ... )
@@ -103,6 +105,8 @@ class SimulationResource:
         self,
         symbol: str,
         cal_date: str,
+        provider: str,
+        exchange: str,
         n_runs: int = 100,
         seed: int = 42,
         scenario: str = "normal",
@@ -111,14 +115,19 @@ class SimulationResource:
     ):
         """
         Submit a simulation run to be executed asynchronously.
-        
+
         The simulation will run n_runs independent Monte Carlo samples. Each run
         produces a unique sim_id that can be used to retrieve results once complete.
         The user_id is automatically set from your API key.
-        
+
+        A symbol is identified by four fields: ``provider``, ``exchange``,
+        ``symbol`` and ``cal_date``.
+
         Args:
             symbol: Trading symbol (e.g., "9999.HK", "0005.HK")
             cal_date: Calibration date in YYYY-MM-DD format (e.g., "2025-09-01")
+            provider: Data provider the symbol is sourced from (e.g., "omd", "bmll")
+            exchange: Exchange protocol name (e.g., "hkex_securities", "hkex_derivatives")
             n_runs: Number of independent Monte Carlo runs (default: 100)
             seed: Master random seed for reproducibility (default: 42)
             scenario: Market scenario to simulate. Options:
@@ -159,14 +168,18 @@ class SimulationResource:
             >>> result = client.simulation.run(
             ...     symbol="9999.HK",
             ...     cal_date="2025-09-01",
+            ...     provider="omd",
+            ...     exchange="hkex_securities",
             ...     n_runs=10
             ... )
             >>> print(result["job_id"])
-            
+
         Example - Flash crash scenario:
             >>> result = client.simulation.run(
             ...     symbol="9999.HK",
             ...     cal_date="2025-09-01",
+            ...     provider="omd",
+            ...     exchange="hkex_securities",
             ...     n_runs=50,
             ...     scenario="flash_crash",
             ...     scenario_params={
@@ -174,11 +187,13 @@ class SimulationResource:
             ...         "impact_multiplier": 15.0
             ...     }
             ... )
-            
+
         Example - With TWAP execution algo (sell 50k shares over 1 hour):
             >>> result = client.simulation.run(
             ...     symbol="9999.HK",
             ...     cal_date="2025-09-01",
+            ...     provider="omd",
+            ...     exchange="hkex_securities",
             ...     n_runs=20,
             ...     exec_algos=[{
             ...         "type": "twap",
@@ -192,6 +207,8 @@ class SimulationResource:
             >>> result = client.simulation.run(
             ...     symbol="9999.HK",
             ...     cal_date="2025-09-01",
+            ...     provider="omd",
+            ...     exchange="hkex_securities",
             ...     n_runs=20,
             ...     exec_algos=[{
             ...         "type": "twap",
@@ -203,6 +220,8 @@ class SimulationResource:
         payload = {
             "symbol": symbol,
             "cal_date": cal_date,
+            "provider": provider,
+            "exchange": exchange,
             "n_runs": n_runs,
             "seed": seed,
             "scenario": scenario,
@@ -232,6 +251,8 @@ class SimulationResource:
         self,
         symbol: str,
         cal_date: str,
+        provider: str,
+        exchange: str,
         simulations: int = None,
         batch_size: int = None,
         optimize_adj_params: bool = True,
@@ -242,9 +263,14 @@ class SimulationResource:
         Calibration runs asynchronously to fit model parameters to observed
         market data for the given symbol and date.
 
+        A symbol is identified by four fields: ``provider``, ``exchange``,
+        ``symbol`` and ``cal_date``.
+
         Args:
             symbol: Trading symbol (e.g., "9999.HK")
             cal_date: Calibration date in YYYY-MM-DD format
+            provider: Data provider the symbol is sourced from (e.g., "omd", "bmll")
+            exchange: Exchange protocol name (e.g., "hkex_securities", "hkex_derivatives")
             simulations: Number of simulations to run during calibration
             batch_size: Batch size for calibration runs
             optimize_adj_params: Whether to optimise adjustment parameters (default: True)
@@ -255,6 +281,8 @@ class SimulationResource:
         payload: dict = {
             "symbol": symbol,
             "cal_date": cal_date,
+            "provider": provider,
+            "exchange": exchange,
             "optimize_adj_params": optimize_adj_params,
         }
         if simulations is not None:
@@ -322,7 +350,7 @@ class SimulationResource:
         Example - Poll for completion:
             >>> import time
             >>> 
-            >>> result = client.simulation.run(symbol="9999.HK", cal_date="2025-09-01", n_runs=10)
+            >>> result = client.simulation.run(symbol="9999.HK", cal_date="2025-09-01", provider="omd", exchange="hkex_securities", n_runs=10)
             >>> job_id = result["job_id"]
             >>> 
             >>> while True:
