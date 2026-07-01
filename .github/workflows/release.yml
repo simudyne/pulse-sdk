@@ -4,7 +4,7 @@ run-name: 📦 Create Release from ${{ github.ref_name }}
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
 
 concurrency:
   group: release

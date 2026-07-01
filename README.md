@@ -16,6 +16,22 @@ pip install simudyne@https://github.com/simudyne/pulse-api/releases/download/v0.
 
 Requires Python 3.10+.
 
+### Development builds
+
+The `dev` branch is a prerelease channel. Pushes to it cut prerelease versions
+(e.g. `0.6.0-dev.1`) that are separate from the stable versions on `main` — the
+`-dev.N` suffix keeps the two from ever colliding. Stable installs above are
+unaffected by anything on `dev`.
+
+To install the latest dev build:
+
+```bash
+pip install git+https://github.com/simudyne/pulse-api.git@dev
+```
+
+Only use dev builds for testing unreleased changes; they are not guaranteed
+stable. Merge `dev` into `main` to promote those changes to a stable release.
+
 ## Quick start
 
 ```python
