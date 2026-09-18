@@ -53,9 +53,54 @@ _TRI_STATE_FLAGS = (
     "plot_data",
 )
 
+#: Areas of checking selectable per job, as of pulse-check 1.10.0. Left unset
+#: they take the server's default, so a job that names none behaves as before.
+_AREA_FLAGS = ("statistical", "stylised_facts", "impact", "volume_correlation",
+               "fid", "mind")
+
+#: Everything else the 1.10.0 schema accepts. ``lob`` marks the frames as L2
+#: snapshots, which switches off anything needing the message stream;
+#: ``sample_period`` and ``match_generated_sample`` set the grid the book is
+#: resampled onto; ``plots`` is False, True, or a list of plot ids;
+#: ``historical_output`` is the demo-only gate that ``plot_data`` used to be.
+_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots",
+                 "historical_output")
+
 #: SDK name -> API config field. The API kept ``run_fid`` for compatibility;
 #: the SDK spells out what it actually gates.
 _INCEPTION_WIRE_FIELD = "run_fid"
+
+
+def _frame_to_parquet(entry, index: int):
+    """Normalise one simulated run to ``(filename, parquet bytes)``.
+
+    Accepts a path, a ``(filename, bytes)`` pair, or a polars / pandas
+    DataFrame, which is written to parquet in memory. The frame must be pulse
+    format -- the same shape the engine writes to ``sim_data.parquet`` -- which
+    the server validates; sending something else fails there, not here.
+    """
+    import io
+
+    if isinstance(entry, tuple):
+        return entry
+
+    # Duck-typed rather than imported: neither polars nor pandas is a hard
+    # dependency of the SDK, and importing one to test for the other would
+    # make it one.
+    writer = getattr(entry, "write_parquet", None)      # polars
+    if writer is not None:
+        buf = io.BytesIO()
+        writer(buf)
+        return f"sim_{index}.parquet", buf.getvalue()
+
+    writer = getattr(entry, "to_parquet", None)          # pandas
+    if writer is not None:
+        buf = io.BytesIO()
+        writer(buf, index=False)
+        return f"sim_{index}.parquet", buf.getvalue()
+
+    path = Path(entry)
+    return path.name, path.read_bytes()
 
 
 def _build_config(
@@ -66,12 +111,14 @@ def _build_config(
     plot_data,
     n_levels,
     l2_only,
+    **extra,
 ) -> dict:
     """The validation config object as the API expects it.
 
     Tri-state flags left as None are omitted rather than sent as null: the API
     reads absence as "use my tier's default", and an explicit null would not
-    do that.
+    do that. The same rule covers the 1.10.0 area flags and everything in
+    ``extra`` — naming nothing new leaves the job behaving exactly as before.
     """
     config = {
         "n_levels": n_levels,
@@ -84,6 +131,18 @@ def _build_config(
     ):
         if value is not None:
             config[flag] = value
+
+    for name in _AREA_FLAGS + _EXTRA_FIELDS:
+        value = extra.get(name)
+        if value is not None:
+            config[name] = value
+
+    unknown = set(extra) - set(_AREA_FLAGS) - set(_EXTRA_FIELDS)
+    if unknown:
+        raise ValueError(
+            f"Unknown validation option(s): {sorted(unknown)}. "
+            f"Valid: {sorted(_AREA_FLAGS + _EXTRA_FIELDS)}"
+        )
     return config
 
 
@@ -106,6 +165,17 @@ class ValidationResource:
         l2_only: bool = False,
         provider: str = None,
         exchange: str = None,
+        statistical: bool = None,
+        stylised_facts: bool = None,
+        impact: bool = None,
+        volume_correlation: bool = None,
+        fid: bool = None,
+        mind: bool = None,
+        lob: bool = None,
+        sample_period: str = None,
+        match_generated_sample: bool = None,
+        plots=None,
+        historical_output: bool = None,
     ) -> dict:
         """Submit a validation job.
 
@@ -155,6 +225,17 @@ class ValidationResource:
         config = _build_config(
             run_metrics, run_impact, run_inception_distances,
             run_stylised_facts, plot_data, n_levels, l2_only,
+            statistical=statistical,
+            stylised_facts=stylised_facts,
+            impact=impact,
+            volume_correlation=volume_correlation,
+            fid=fid,
+            mind=mind,
+            lob=lob,
+            sample_period=sample_period,
+            match_generated_sample=match_generated_sample,
+            plots=plots,
+            historical_output=historical_output,
         )
 
         payload = {
@@ -186,6 +267,17 @@ class ValidationResource:
         plot_data: bool = None,
         n_levels: int = 10,
         l2_only: bool = False,
+        statistical: bool = None,
+        stylised_facts: bool = None,
+        impact: bool = None,
+        volume_correlation: bool = None,
+        fid: bool = None,
+        mind: bool = None,
+        lob: bool = None,
+        sample_period: str = None,
+        match_generated_sample: bool = None,
+        plots=None,
+        historical_output: bool = None,
     ) -> dict:
         """Submit a validation job from simulation files you hold yourself.
 
@@ -227,15 +319,22 @@ class ValidationResource:
         config = _build_config(
             run_metrics, run_impact, run_inception_distances,
             run_stylised_facts, plot_data, n_levels, l2_only,
+            statistical=statistical,
+            stylised_facts=stylised_facts,
+            impact=impact,
+            volume_correlation=volume_correlation,
+            fid=fid,
+            mind=mind,
+            lob=lob,
+            sample_period=sample_period,
+            match_generated_sample=match_generated_sample,
+            plots=plots,
+            historical_output=historical_output,
         )
 
         files = []
-        for entry in sim_files:
-            if isinstance(entry, tuple):
-                filename, content = entry
-            else:
-                path = Path(entry)
-                filename, content = path.name, path.read_bytes()
+        for index, entry in enumerate(sim_files):
+            filename, content = _frame_to_parquet(entry, index)
             files.append(
                 ("sim_files", (filename, content, "application/octet-stream"))
             )
@@ -316,6 +415,17 @@ class ValidationResource:
         exchange: str = None,
         poll_interval: float = 3.0,
         timeout: float = 600.0,
+        statistical: bool = None,
+        stylised_facts: bool = None,
+        impact: bool = None,
+        volume_correlation: bool = None,
+        fid: bool = None,
+        mind: bool = None,
+        lob: bool = None,
+        sample_period: str = None,
+        match_generated_sample: bool = None,
+        plots=None,
+        historical_output: bool = None,
     ) -> dict:
         """Submit a validation job and block until it completes.
 
@@ -364,6 +474,17 @@ class ValidationResource:
             l2_only=l2_only,
             provider=provider,
             exchange=exchange,
+            statistical=statistical,
+            stylised_facts=stylised_facts,
+            impact=impact,
+            volume_correlation=volume_correlation,
+            fid=fid,
+            mind=mind,
+            lob=lob,
+            sample_period=sample_period,
+            match_generated_sample=match_generated_sample,
+            plots=plots,
+            historical_output=historical_output,
         )
         job_id = job["job_id"]
         print(f"Validation job submitted: {job_id}", file=sys.stderr)

@@ -156,3 +156,113 @@ class TestRunPipeline:
         )
         assert result["status"] == "completed"
         assert "spread" in result["distances"]
+
+
+class TestNewValidationOptions:
+    """pulse-check 1.10.0 areas, sampling and plot selection.
+
+    Everything here is opt-in: a job naming none of it must send exactly the
+    config it sent before, so existing callers are untouched.
+    """
+
+    BASE = dict(
+        run_metrics=None,
+        run_impact=None,
+        run_inception_distances=True,
+        run_stylised_facts=None,
+        plot_data=None,
+        n_levels=10,
+        l2_only=False,
+    )
+
+    def test_naming_nothing_new_is_unchanged(self):
+        from simudyne.resources.validation import _build_config
+
+        assert _build_config(**self.BASE) == {
+            "n_levels": 10,
+            "l2_only": False,
+            "run_fid": True,
+        }
+
+    @pytest.mark.parametrize(
+        "name,value",
+        [
+            ("statistical", False),
+            ("stylised_facts", True),
+            ("impact", False),
+            ("volume_correlation", True),
+            ("fid", False),
+            ("mind", True),
+            ("lob", True),
+            ("sample_period", "100ms"),
+            ("match_generated_sample", True),
+            ("historical_output", True),
+            ("plots", ["volume_correlation.levels"]),
+        ],
+    )
+    def test_option_is_forwarded(self, name, value):
+        from simudyne.resources.validation import _build_config
+
+        assert _build_config(**self.BASE, **{name: value})[name] == value
+
+    def test_unknown_option_is_rejected_by_name(self):
+        from simudyne.resources.validation import _build_config
+
+        with pytest.raises(ValueError, match="Unknown validation option"):
+            _build_config(**self.BASE, volume_corelation=True)
+
+    def test_none_is_omitted_not_sent_as_null(self):
+        """Absence means 'use my tier's default'; null would not."""
+        from simudyne.resources.validation import _build_config
+
+        assert "volume_correlation" not in _build_config(
+            **self.BASE, volume_correlation=None
+        )
+
+
+class TestSimulatedFrameShapes:
+    """run_upload takes a path, a (name, bytes) pair, or a DataFrame."""
+
+    def test_tuple_passes_through(self):
+        from simudyne.resources.validation import _frame_to_parquet
+
+        assert _frame_to_parquet(("a.parquet", b"raw"), 0) == ("a.parquet", b"raw")
+
+    def test_path(self, tmp_path):
+        import pandas as pd
+
+        from simudyne.resources.validation import _frame_to_parquet
+
+        p = tmp_path / "run.parquet"
+        pd.DataFrame({"a": [1, 2]}).to_parquet(p)
+        name, content = _frame_to_parquet(str(p), 0)
+        assert name == "run.parquet"
+        assert content[:4] == b"PAR1"
+
+    def test_pandas_frame(self):
+        import pandas as pd
+
+        from simudyne.resources.validation import _frame_to_parquet
+
+        name, content = _frame_to_parquet(pd.DataFrame({"a": [1, 2]}), 3)
+        assert name == "sim_3.parquet"
+        assert content[:4] == b"PAR1"
+
+    def test_polars_frame(self):
+        pl = pytest.importorskip("polars")
+
+        from simudyne.resources.validation import _frame_to_parquet
+
+        name, content = _frame_to_parquet(pl.DataFrame({"a": [1, 2]}), 1)
+        assert name == "sim_1.parquet"
+        assert content[:4] == b"PAR1"
+
+    def test_each_frame_gets_its_own_name(self):
+        """Distinct names, or the multipart upload collapses the runs."""
+        import pandas as pd
+
+        from simudyne.resources.validation import _frame_to_parquet
+
+        frames = [pd.DataFrame({"a": [i]}) for i in range(3)]
+        names = [_frame_to_parquet(f, i)[0] for i, f in enumerate(frames)]
+        assert len(set(names)) == 3
