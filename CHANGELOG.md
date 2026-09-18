@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.4 (2026-09-18)
+
+### Features
+
+- **validation**: Areas, sampling, plot selection and DataFrame runs
+  ([`b740519`](https://github.com/simudyne/pulse-sdk/commit/b7405191e9c402f48e4b6ae66f9a6033584a1c72))
+
+Exposes what pulse-check 1.10.0 added, all opt-in: a job naming none of it sends exactly the config
+  it sent before.
+
+- statistical / stylised_facts / impact / volume_correlation / fid / mind select areas of checking
+  individually - lob marks the frames as L2 snapshots; sample_period and match_generated_sample set
+  the grid the book is resampled onto - plots takes True or a list of plot ids; historical_output is
+  the demo-only gate that plot_data used to be - run_upload now accepts a polars or pandas DataFrame
+  per run as well as a path or a (name, bytes) pair, written to parquet in memory. The frame must be
+  pulse format, which the server validates
+
+The options are explicit keyword parameters rather than **options: the suite asserts that removed
+  spellings like run_fid raise TypeError, and a catch-all would have swallowed them into a
+  ValueError deeper down.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01MVGkF8JVCmPBi4UAcyS1K3
+
+
 ## v0.7.0-dev.3 (2026-09-09)
 
 ### Bug Fixes
