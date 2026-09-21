@@ -19,18 +19,26 @@ class DataResource:
         All arguments are optional filters; with none passed the whole catalog
         comes back, as before.
 
-        Args:
-            symbol: Exact symbol, e.g. "700.HK".
-            exchange: Exchange protocol, e.g. "hkex_securities".
-            provider: Data provider, e.g. "omd" or "bmll".
-            date: Calibration date "YYYY-MM-DD". Keeps only instruments
-                  calibrated on that date, and narrows each instrument's
-                  available_dates to it.
-            limit: Max instruments to return.
-            offset: Instruments to skip (for paging alongside limit).
+        Parameters
+        ----------
+        symbol : str, optional
+            Exact symbol, e.g. "700.HK".
+        exchange : str, optional
+            Exchange protocol, e.g. "hkex_securities".
+        provider : str, optional
+            Data provider, e.g. "omd" or "bmll".
+        date : str, optional
+            Calibration date "YYYY-MM-DD". Keeps only instruments
+            calibrated on that date, and narrows each instrument's
+            available_dates to it.
+        limit : int, optional
+            Max instruments to return.
+        offset : int, optional
+            Instruments to skip (for paging alongside limit).
 
-        Returns:
-            list of instrument dicts, each with available_dates.
+        Returns
+        -------
+        list of instrument dicts, each with available_dates.
         """
         params = {
             k: v for k, v in {

@@ -47,24 +47,37 @@ class ValidationResource:
         Historical data is fetched automatically from GCS based on symbol and date.
         Simulation data is fetched from each sim_id's sim_data.parquet in GCS.
 
-        Args:
-            symbol: Trading symbol (e.g. "700.HK")
-            date: Calibration date in YYYY-MM-DD format (e.g. "2025-09-01")
-            sim_ids: List of simulation IDs to validate (max 25)
-            ticksize: Tick size for the symbol
-            run_metrics: Compute L1/Wasserstein distributional distances
-            run_impact: Compute impact response curves
-            run_fid: Compute Frechet Inception Distance
-            run_stylised_facts: Compute stylised facts (autocorrelation, heavy
-                tails, volatility clustering). Left unset it is omitted from the
-                request, so the API applies your tier's default — demo accounts
-                get them, pro accounts do not.
-            n_levels: Number of L2 book levels to use
-            rescale_volumes: Multiply simulated L2 size columns by lot_size
-            lot_size: Lot size multiplier for volume rescaling
+        Parameters
+        ----------
+        symbol : str
+            Trading symbol (e.g. "700.HK")
+        date : str
+            Calibration date in YYYY-MM-DD format (e.g. "2025-09-01")
+        sim_ids : list[str]
+            List of simulation IDs to validate (max 25)
+        ticksize : float, default 1.0
+            Tick size for the symbol
+        run_metrics : bool, default True
+            Compute L1/Wasserstein distributional distances
+        run_impact : bool, default False
+            Compute impact response curves
+        run_fid : bool, default False
+            Compute Frechet Inception Distance
+        run_stylised_facts : bool, optional
+            Compute stylised facts (autocorrelation, heavy
+            tails, volatility clustering). Left unset it is omitted from the
+            request, so the API applies your tier's default — demo accounts
+            get them, pro accounts do not.
+        n_levels : int, default 10
+            Number of L2 book levels to use
+        rescale_volumes : bool, default True
+            Multiply simulated L2 size columns by lot_size
+        lot_size : int, default 1
+            Lot size multiplier for volume rescaling
 
-        Returns:
-            dict with job_id, status, message
+        Returns
+        -------
+        dict with job_id, status, message
         """
         # run_metrics/run_impact/run_fid keep sending their long-standing values
         # so existing callers see no change. run_stylised_facts is omitted when
@@ -93,11 +106,14 @@ class ValidationResource:
     def get_job(self, job_id: str) -> dict:
         """Get validation job status and results.
 
-        Args:
-            job_id: The job ID returned by run()
+        Parameters
+        ----------
+        job_id : str
+            The job ID returned by run()
 
-        Returns:
-            dict with:
+        Returns
+        -------
+        dict with
             - status: "pending", "running", "completed", or "failed"
             - distances: dict of {metric: {l1: [...], w: [...]}} (when completed)
             - metadata: dict with run parameters, including which passes ran
@@ -108,7 +124,7 @@ class ValidationResource:
 
             - distributions: per-metric historical vs simulated histograms
             - impact_response: impact response curves as numbers, historical and
-              one block per sim run
+            one block per sim run
             - stylised_facts: historical and one block per sim run
             - fid_scores: one score per sim run (None where not computable)
         """
@@ -117,11 +133,14 @@ class ValidationResource:
     def list_jobs(self, limit: int = 50) -> dict:
         """List validation jobs for the current user.
 
-        Args:
-            limit: Max number of jobs to return (default 50, max 200)
+        Parameters
+        ----------
+        limit : int, default 50
+            Max number of jobs to return (default 50, max 200)
 
-        Returns:
-            dict with jobs list and total count
+        Returns
+        -------
+        dict with jobs list and total count
         """
         return self._client._request("GET", JOBS_PATH, params={"limit": limit})
 
@@ -146,30 +165,48 @@ class ValidationResource:
         Combines run() + polling get_job() into a single call.
         Prints progress to stderr.
 
-        Args:
-            symbol: Trading symbol (e.g. "700.HK")
-            date: Calibration date in YYYY-MM-DD format
-            sim_ids: List of simulation IDs to validate (max 25)
-            ticksize: Tick size for the symbol
-            run_metrics: Compute L1/Wasserstein distributional distances
-            run_impact: Compute impact response curves
-            run_fid: Compute Frechet Inception Distance
-            run_stylised_facts: Compute stylised facts (autocorrelation, heavy
-                tails, volatility clustering). Left unset it is omitted from the
-                request, so the API applies your tier's default — demo accounts
-                get them, pro accounts do not.
-            n_levels: Number of L2 book levels to use
-            rescale_volumes: Multiply simulated L2 size columns by lot_size
-            lot_size: Lot size multiplier for volume rescaling
-            poll_interval: Seconds between status checks (default 3)
-            timeout: Max seconds to wait (default 600)
+        Parameters
+        ----------
+        symbol : str
+            Trading symbol (e.g. "700.HK")
+        date : str
+            Calibration date in YYYY-MM-DD format
+        sim_ids : list[str]
+            List of simulation IDs to validate (max 25)
+        ticksize : float, default 1.0
+            Tick size for the symbol
+        run_metrics : bool, default True
+            Compute L1/Wasserstein distributional distances
+        run_impact : bool, default False
+            Compute impact response curves
+        run_fid : bool, default False
+            Compute Frechet Inception Distance
+        run_stylised_facts : bool, optional
+            Compute stylised facts (autocorrelation, heavy
+            tails, volatility clustering). Left unset it is omitted from the
+            request, so the API applies your tier's default — demo accounts
+            get them, pro accounts do not.
+        n_levels : int, default 10
+            Number of L2 book levels to use
+        rescale_volumes : bool, default True
+            Multiply simulated L2 size columns by lot_size
+        lot_size : int, default 1
+            Lot size multiplier for volume rescaling
+        poll_interval : float, default 3.0
+            Seconds between status checks (default 3)
+        timeout : float, default 600.0
+            Max seconds to wait (default 600)
 
-        Returns:
-            dict with full validation results (distances, plots, metadata)
+        Returns
+        -------
+        dict with full validation results (distances, plots, metadata)
 
-        Raises:
-            RuntimeError: If the validation job fails
-            TimeoutError: If the job doesn't complete within timeout
+        Raises
+        ------
+        RuntimeError
+            If the validation job fails
+        TimeoutError
+            If the job doesn't complete within timeout
         """
         import sys
 
@@ -215,8 +252,10 @@ class ValidationResource:
             plots.distances()        # show spider plots
             plots.impact_response()  # show impact response plots
 
-        Args:
-            result: The result dict from run_pipeline() or get_job()
+        Parameters
+        ----------
+        result : dict
+            The result dict from run_pipeline() or get_job()
         """
         return PlotDisplay(result)
 
