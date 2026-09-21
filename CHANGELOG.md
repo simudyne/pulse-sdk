@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.6 (2026-09-21)
+
+### Bug Fixes
+
+- **docs**: Document every SDK endpoint in numpy style
+  ([`3a86f16`](https://github.com/simudyne/pulse-sdk/commit/3a86f16e1feba720093e4dcd54fd16b82524b547))
+
+An audit of all 45 public methods found gaps the format conversion did not touch, because these
+  docstrings had nothing to convert.
+
+- api_keys.create/list/revoke and profile.get/usage had NO docstring at all, so five endpoints
+  rendered in pulse-docs as a bare signature - validation.run, run_pipeline and run_upload accept
+  24-26 arguments and documented only some: the pulse-check 1.10.0 area flags (statistical,
+  stylised_facts, impact, volume_correlation, fid, mind) and the extra schema fields (lob,
+  sample_period, match_generated_sample, plots, historical_output) were described only in module
+  comments. run_upload was also missing the seven config flags it shares with run -
+  profile.downloads and display_plots had prose docstrings with no numpy sections
+
+griffe's numpy parser now reads all 45 docstrings and 156 parameters, up from 132, with zero
+  undocumented arguments across the SDK.
+
+Docstrings only: the executable code of every touched file is identical to origin/dev once
+  docstrings are stripped.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.5 (2026-09-21)
 
 ### Bug Fixes
