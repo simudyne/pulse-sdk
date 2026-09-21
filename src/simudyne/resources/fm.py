@@ -47,8 +47,9 @@ class FmResource:
         ``min_prompt_rows``, and the ``model_args`` descriptors for the knobs
         run() will accept. Pro tier.
 
-        Returns:
-            dict with a ``models`` list.
+        Returns
+        -------
+        dict with a ``models`` list.
         """
         return self._client._request("GET", MODELS_PATH)
 
@@ -71,19 +72,29 @@ class FmResource:
         restricts the result to the (provider, exchange) markets that model's
         ``supported_data`` declares — exactly what run() will accept.
 
-        Args:
-            model_id: Registered model (see models()). Unknown id -> 404.
-            symbol: Exact symbol, e.g. "TSCO" or "700".
-            q: Case-insensitive substring match over the symbol.
-            provider: Data provider, e.g. "bmll".
-            exchange: Protocol, e.g. "lse" or "hkex_securities".
-            date: Trading date YYYY-MM-DD; keeps only symbols with data on it,
-                and only that date.
-            limit: Max symbols to return (default 50, max 200).
-            offset: Symbols to skip, for paging.
+        Parameters
+        ----------
+        model_id : str, optional
+            Registered model (see models()). Unknown id -> 404.
+        symbol : str, optional
+            Exact symbol, e.g. "TSCO" or "700".
+        q : str, optional
+            Case-insensitive substring match over the symbol.
+        provider : str, optional
+            Data provider, e.g. "bmll".
+        exchange : str, optional
+            Protocol, e.g. "lse" or "hkex_securities".
+        date : str, optional
+            Trading date YYYY-MM-DD; keeps only symbols with data on it,
+            and only that date.
+        limit : int, default 50
+            Max symbols to return (default 50, max 200).
+        offset : int, default 0
+            Symbols to skip, for paging.
 
-        Returns:
-            dict with ``symbols`` (each with its provider, exchange and dates)
+        Returns
+        -------
+        dict with ``symbols`` (each with its provider, exchange and dates)
             and ``total``, paged by symbol identity.
         """
         params = {"limit": limit, "offset": offset}
@@ -112,28 +123,42 @@ class FmResource:
     ) -> dict:
         """Submit a foundation-model inference job. Pro tier.
 
-        Args:
-            model_id: A model from models().
-            symbol: Symbol whose real data becomes the prompt context.
-            cal_date: Trading date of the prompt, YYYY-MM-DD.
-            provider: Data provider, e.g. "bmll".
-            exchange: Exchange protocol, e.g. "hkex_securities".
-            duration_minutes: Sim horizon as wall-clock minutes measured from
-                the first row of the context. The resulting frame count is
-                reported in the run's output rather than requested up front.
-            horizon: Raw frame count — the older form; applies only when
-                duration_minutes is unset.
-            n_runs: Monte Carlo runs, 1-8 (per-run seeds derived from ``seed``
-                exactly as the ABM derives them).
-            seed: Random seed (default 42).
-            model_args: Overrides for the model's declared knobs (see
-                models()); unknown or out-of-range keys are rejected with 400.
-            device: "cpu" or "gpu"; None uses the model's default.
-            exec_algos: Execution algorithms, the ABM's config shape. At most
-                one per job; market runs only.
+        Parameters
+        ----------
+        model_id : str
+            A model from models().
+        symbol : str
+            Symbol whose real data becomes the prompt context.
+        cal_date : str
+            Trading date of the prompt, YYYY-MM-DD.
+        provider : str
+            Data provider, e.g. "bmll".
+        exchange : str
+            Exchange protocol, e.g. "hkex_securities".
+        duration_minutes : float, optional
+            Sim horizon as wall-clock minutes measured from
+            the first row of the context. The resulting frame count is
+            reported in the run's output rather than requested up front.
+        horizon : int, optional
+            Raw frame count — the older form; applies only when
+            duration_minutes is unset.
+        n_runs : int, default 1
+            Monte Carlo runs, 1-8 (per-run seeds derived from ``seed``
+            exactly as the ABM derives them).
+        seed : int, default 42
+            Random seed (default 42).
+        model_args : dict, optional
+            Overrides for the model's declared knobs (see
+            models()); unknown or out-of-range keys are rejected with 400.
+        device : str, optional
+            "cpu" or "gpu"; None uses the model's default.
+        exec_algos : list, optional
+            Execution algorithms, the ABM's config shape. At most
+            one per job; market runs only.
 
-        Returns:
-            dict with job_id, the model version, and the queued sim_ids.
+        Returns
+        -------
+        dict with job_id, the model version, and the queued sim_ids.
         """
         payload = {
             "model_id": model_id,
@@ -165,8 +190,9 @@ class FmResource:
     ) -> dict:
         """Start a live streaming session instead of a batch job. Pro tier.
 
-        Returns:
-            dict with ``token`` (used to connect to the live chart),
+        Returns
+        -------
+        dict with ``token`` (used to connect to the live chart),
             ``job_id`` and ``model_id``.
         """
         payload = {"model_id": model_id, "seed": seed}
@@ -179,8 +205,9 @@ class FmResource:
     def job_status(self, job_id: str) -> dict:
         """Foundation-model job status.
 
-        Returns:
-            dict with job_id, ``status``, ``message``, ``detail``,
+        Returns
+        -------
+        dict with job_id, ``status``, ``message``, ``detail``,
             ``started_at`` and ``completed_at``. ``status`` is one of queued,
             provisioning, starting, running, complete or failed — only the
             last two are terminal (see TERMINAL_STATUSES), so poll until one
@@ -193,7 +220,8 @@ class FmResource:
     def job_logs(self, job_id: str) -> dict:
         """Foundation-model job pod logs.
 
-        Returns:
-            dict with ``logs`` — the thing to read when a job failed.
+        Returns
+        -------
+        dict with ``logs`` — the thing to read when a job failed.
         """
         return self._client._request("GET", f"{JOBS_PATH}/{job_id}/logs")

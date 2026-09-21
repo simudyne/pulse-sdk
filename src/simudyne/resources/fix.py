@@ -18,13 +18,15 @@ class FixResource:
     def usage(self) -> dict:
         """FIX simulation statistics: what was run over FIX, and how often.
 
-        Returns:
-            dict with ``total_runs``, ``simulated_seconds``, and ``runs`` — one
+        Returns
+        -------
+        dict with ``total_runs``, ``simulated_seconds``, and ``runs`` — one
             entry per distinct configuration, each with its ``symbol``,
             ``cal_date``, ``scenario`` and ``runs`` count.
 
-        Example:
-            >>> usage = client.fix.usage()
-            >>> print(f"{usage['total_runs']} FIX runs")
+        Examples
+        --------
+        >>> usage = client.fix.usage()
+        >>> print(f"{usage['total_runs']} FIX runs")
         """
         return self._client._request("GET", USAGE_PATH)

@@ -13,11 +13,15 @@ class GymSession:
     def reset(self, seed: int = None) -> dict:
         """Reset the environment and return the initial observation.
 
-        Args:
-            seed: Optional random seed for reproducibility.
+        Parameters
+        ----------
+        seed : int, optional
+            Optional random seed for reproducibility.
 
-        Returns:
-            dict with keys: type, obs (47 floats), reward, done, info
+        Returns
+        -------
+        dict with keys
+            type, obs (47 floats), reward, done, info
         """
         self._ws.send(json.dumps({"type": "reset", "seed": seed}))
         msg = json.loads(self._ws.recv())
@@ -28,11 +32,15 @@ class GymSession:
     def step(self, action: int) -> dict:
         """Take one step in the environment.
 
-        Args:
-            action: Integer action in range 0-13.
+        Parameters
+        ----------
+        action : int
+            Integer action in range 0-13.
 
-        Returns:
-            dict with keys: type, obs (47 floats), reward, done, info
+        Returns
+        -------
+        dict with keys
+            type, obs (47 floats), reward, done, info
         """
         self._ws.send(json.dumps({"type": "step", "action": action}))
         msg = json.loads(self._ws.recv())
@@ -70,17 +78,22 @@ class SimulatorGymResource:
     def connect(self, symbol: str, cal_date: str, exchange: str) -> GymSession:
         """Open a new simulator-gym session.
 
-        Args:
-            symbol:    Trading symbol, e.g. "700.HK"
-            cal_date:  Calibration date, e.g. "2025-09-02"
-            exchange:  Exchange identifier, e.g. "HKEX.Securities"
+        Parameters
+        ----------
+        symbol : str
+            Trading symbol, e.g. "700.HK"
+        cal_date : str
+            Calibration date, e.g. "2025-09-02"
+        exchange : str
+            Exchange identifier, e.g. "HKEX.Securities"
 
-        Returns:
-            GymSession — use as a context manager:
+        Returns
+        -------
+        GymSession — use as a context manager:
 
-                with client.simulator_gym.connect("700.HK", "2025-09-02", "HKEX.Securities") as env:
-                    obs = env.reset(seed=42)
-                    result = env.step(0)
+            with client.simulator_gym.connect("700.HK", "2025-09-02", "HKEX.Securities") as env:
+            obs = env.reset(seed=42)
+            result = env.step(0)
         """
         ws_url = f"{self._ws_base_url()}/ws/simulator-gym"
         try:
