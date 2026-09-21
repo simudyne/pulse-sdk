@@ -1,14 +1,19 @@
-"""Tests for the validation resource's request payloads and score handling.
+"""Tests for the validation resource.
 
-No network: the client's _request is replaced with a recorder, so these assert
-the exact payload the API receives — which is what actually broke when
-pulse-check 1.8.0 dropped rescale_volumes/lot_size and made run_fid gate both
-inception distances.
+No network: the client's ``_request`` is replaced with a recorder, so these
+assert the exact payload the API receives and the exact result handed back.
+
+The surface is one call — ``run`` submits, waits and returns the finished
+result — so most of what is worth pinning is what it sends, what it refuses to
+send, and what it does with the response.
 """
+
+import base64
+import json
 
 import pytest
 
-from simudyne.resources.validation import ValidationResource
+from simudyne.resources.validation import MAX_SIM_FILES, ValidationResource
 
 
 class FakeClient:
@@ -24,245 +29,202 @@ class FakeClient:
 
 
 SIM_IDS = ["omd:hkex_securities:700.HK:2025-12-22:abc:normal:baseline:0000"]
+IDENTITY = dict(symbol="700.HK", date="2025-12-22", provider="omd",
+                exchange="hkex_securities")
+
+PNG = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
 
 
-class TestRunPayload:
-    def test_unset_flags_are_omitted_so_the_tier_default_applies(self):
-        client = FakeClient([{"job_id": "v1", "status": "pending"}])
-        ValidationResource(client).run("700.HK", "2025-12-22", SIM_IDS)
-
-        _, path, kwargs = client.calls[0]
-        config = kwargs["json"]["config"]
-        assert path == "/validation/run"
-        # Sending these as null would override the server-side tier default.
-        for flag in ("run_metrics", "run_impact",
-                     "run_stylised_facts", "plot_data"):
-            assert flag not in config, f"{flag} must be omitted when unset"
-        # run_inception_distances is NOT tri-state: it defaults to True and is
-        # always sent, as the API's run_fid field.
-        assert config == {"n_levels": 10, "l2_only": False, "run_fid": True}
-
-    def test_explicit_flags_are_sent(self):
-        client = FakeClient([{"job_id": "v1"}])
-        ValidationResource(client).run(
-            "700.HK", "2025-12-22", SIM_IDS, run_impact=False
-        )
-
-        config = client.calls[0][2]["json"]["config"]
-        # An explicit False must survive — it is how a demo user skips a pass.
-        assert config["run_impact"] is False
-
-    def test_inception_distances_can_be_opted_out(self):
-        """Non-demo tiers should be able to skip the embedding pass."""
-        client = FakeClient([{"job_id": "v1"}])
-        ValidationResource(client).run(
-            "700.HK", "2025-12-22", SIM_IDS, run_inception_distances=False
-        )
-        assert client.calls[0][2]["json"]["config"]["run_fid"] is False
-
-    def test_old_run_fid_kwarg_is_rejected(self):
-        """Renamed to run_inception_distances — the old spelling must fail loudly."""
-        with pytest.raises(TypeError):
-            ValidationResource(FakeClient([{}])).run(
-                "700.HK", "2025-12-22", SIM_IDS, run_fid=True
-            )
-
-    def test_removed_params_are_not_accepted(self):
-        """rescale_volumes/lot_size went away with pulse-check 1.8.0."""
-        resource = ValidationResource(FakeClient([{}]))
-        with pytest.raises(TypeError):
-            resource.run("700.HK", "2025-12-22", SIM_IDS, rescale_volumes=True)
-        with pytest.raises(TypeError):
-            resource.run("700.HK", "2025-12-22", SIM_IDS, lot_size=100)
-
-    def test_provider_and_exchange_omitted_unless_given(self):
-        client = FakeClient([{}, {}])
-        r = ValidationResource(client)
-        r.run("700.HK", "2025-12-22", SIM_IDS)
-        assert "provider" not in client.calls[0][2]["json"]
-
-        r.run("700.HK", "2025-12-22", SIM_IDS, provider="omd", exchange="lse")
-        payload = client.calls[1][2]["json"]
-        assert payload["provider"] == "omd" and payload["exchange"] == "lse"
-
-
-class TestInceptionDistances:
-    def _completed(self, **extra):
-        return {"job_id": "v1", "status": "completed", **extra}
-
-    def test_forces_fid_on_and_everything_else_off(self):
-        client = FakeClient([
-            {"job_id": "v1", "status": "pending"},
-            self._completed(mind_scores=[12.5], fid_scores=[8.25]),
-        ])
-        out = ValidationResource(client).inception_distances(
-            "700.HK", "2025-12-22", SIM_IDS, poll_interval=0
-        )
-
-        config = client.calls[0][2]["json"]["config"]
-        assert config["run_fid"] is True  # wire name for run_inception_distances
-        assert config["run_metrics"] is False
-        assert config["run_impact"] is False
-        assert config["run_stylised_facts"] is False
-
-        assert out["mind"] == [12.5]
-        assert out["fid"] == [8.25]
-        assert out["sim_ids"] == SIM_IDS
-        assert out["job_id"] == "v1"
-
-    def test_none_scores_are_preserved_to_keep_indexing_aligned(self):
-        two = SIM_IDS * 2
-        client = FakeClient([
-            {"job_id": "v1", "status": "pending"},
-            self._completed(mind_scores=[12.5, None], fid_scores=[8.25, None]),
-        ])
-        out = ValidationResource(client).inception_distances(
-            "700.HK", "2025-12-22", two, poll_interval=0
-        )
-        assert out["mind"] == [12.5, None]
-        assert len(out["mind"]) == len(out["sim_ids"])
-
-    def test_missing_scores_raise_rather_than_returning_empty(self):
-        """A skipped pass or a non-demo key is silent in the raw response."""
-        client = FakeClient([
-            {"job_id": "v1", "status": "pending"},
-            self._completed(mind_scores=None, fid_scores=None),
-        ])
-        with pytest.raises(RuntimeError, match="no inception distances"):
-            ValidationResource(client).inception_distances(
-                "700.HK", "2025-12-22", SIM_IDS, poll_interval=0
-            )
-
-
-class TestRunPipeline:
-    def test_raises_on_failed_job(self):
-        client = FakeClient([
-            {"job_id": "v1", "status": "pending"},
-            {"job_id": "v1", "status": "failed", "error": "boom"},
-        ])
-        with pytest.raises(RuntimeError, match="boom"):
-            ValidationResource(client).run_pipeline(
-                "700.HK", "2025-12-22", SIM_IDS, poll_interval=0
-            )
-
-    def test_returns_the_completed_result(self):
-        client = FakeClient([
-            {"job_id": "v1", "status": "pending"},
-            {"job_id": "v1", "status": "running"},
-            {"job_id": "v1", "status": "completed", "distances": {"spread": {}}},
-        ])
-        result = ValidationResource(client).run_pipeline(
-            "700.HK", "2025-12-22", SIM_IDS, poll_interval=0
-        )
-        assert result["status"] == "completed"
-        assert "spread" in result["distances"]
-
-
-class TestNewValidationOptions:
-    """pulse-check 1.10.0 areas, sampling and plot selection.
-
-    Everything here is opt-in: a job naming none of it must send exactly the
-    config it sent before, so existing callers are untouched.
-    """
-
-    BASE = dict(
-        run_metrics=None,
-        run_impact=None,
-        run_inception_distances=True,
-        run_stylised_facts=None,
-        plot_data=None,
-        n_levels=10,
-        l2_only=False,
+def _run(responses, **kwargs):
+    client = FakeClient(responses)
+    result = ValidationResource(client).run(
+        sim_ids=SIM_IDS, **{**IDENTITY, **kwargs}
     )
+    return client, result
 
-    def test_naming_nothing_new_is_unchanged(self):
-        from simudyne.resources.validation import _build_config
 
-        assert _build_config(**self.BASE) == {
-            "n_levels": 10,
-            "l2_only": False,
-            "run_fid": True,
-        }
+def _done(**extra):
+    return {"job_id": "v1", "status": "completed", **extra}
+
+
+class TestIdentityIsRequired:
+    """The same symbol exists under two providers with different tick sizes,
+    so the symbol alone never identified an instrument."""
+
+    @pytest.mark.parametrize("missing", ["symbol", "date", "provider", "exchange"])
+    def test_every_identity_field_is_required(self, missing):
+        kwargs = {k: v for k, v in IDENTITY.items() if k != missing}
+        with pytest.raises(TypeError):
+            ValidationResource(FakeClient()).run(sim_ids=SIM_IDS, **kwargs)
+
+
+class TestWhatToValidate:
+    def test_sim_ids_go_as_json(self):
+        client, _ = _run([{"job_id": "v1"}])
+        method, path, kwargs = client.calls[0]
+        assert (method, path) == ("POST", "/validation/run")
+        assert kwargs["json"]["sim_ids"] == SIM_IDS
+        assert kwargs["json"]["provider"] == "omd"
+
+    def test_sim_files_go_as_multipart_to_the_upload_route(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_files=[("a.parquet", b"x"), ("b.parquet", b"y")], **IDENTITY
+        )
+        method, path, kwargs = client.calls[0]
+        assert (method, path) == ("POST", "/validation/run/upload")
+        assert len(kwargs["files"]) == 2
+        assert json.loads(kwargs["data"]["config"])["n_levels"] == 10
 
     @pytest.mark.parametrize(
-        "name,value",
+        "kwargs,match",
         [
-            ("statistical", False),
-            ("stylised_facts", True),
-            ("impact", False),
-            ("volume_correlation", True),
-            ("fid", False),
-            ("mind", True),
-            ("lob", True),
-            ("sample_period", "100ms"),
-            ("match_generated_sample", True),
-            ("historical_output", True),
-            ("plots", ["volume_correlation.levels"]),
+            ({}, "exactly one"),
+            ({"sim_ids": SIM_IDS, "sim_files": [("a", b"x")]}, "exactly one"),
+            ({"sim_ids": []}, "must not be empty"),
+            ({"sim_ids": SIM_IDS * (MAX_SIM_FILES + 1)}, "Maximum 25"),
+            ({"sim_ids": SIM_IDS, "ticksize": 0}, "ticksize must be positive"),
+            ({"sim_ids": SIM_IDS, "n_levels": 0}, "at least 1"),
         ],
     )
-    def test_option_is_forwarded(self, name, value):
-        from simudyne.resources.validation import _build_config
+    def test_bad_input_is_refused_before_any_request(self, kwargs, match):
+        client = FakeClient()
+        with pytest.raises(ValueError, match=match):
+            ValidationResource(client).run(**{**IDENTITY, **kwargs})
+        assert client.calls == []
 
-        assert _build_config(**self.BASE, **{name: value})[name] == value
 
-    def test_unknown_option_is_rejected_by_name(self):
-        from simudyne.resources.validation import _build_config
+class TestMetricFlags:
+    def test_unset_flags_are_omitted_so_the_tier_default_applies(self):
+        client, _ = _run([{"job_id": "v1"}])
+        config = client.calls[0][2]["json"]["config"]
+        # Sending these as null would override the server-side tier default.
+        for flag in ("statistical", "stylised_facts", "impact",
+                     "volume_correlation", "fid", "mind"):
+            assert flag not in config, f"{flag} must be omitted when unset"
+        assert config == {"n_levels": 10}
 
-        with pytest.raises(ValueError, match="Unknown validation option"):
-            _build_config(**self.BASE, volume_corelation=True)
+    @pytest.mark.parametrize(
+        "flag,value",
+        [("statistical", False), ("stylised_facts", True), ("impact", False),
+         ("volume_correlation", True), ("fid", False), ("mind", True),
+         ("lob", True), ("sample_period", "100ms"),
+         ("match_generated_sample", True),
+         ("plots", ["statistical.radar"])],
+    )
+    def test_explicit_options_are_forwarded(self, flag, value):
+        client, _ = _run([{"job_id": "v1"}], **{flag: value})
+        assert client.calls[0][2]["json"]["config"][flag] == value
 
-    def test_none_is_omitted_not_sent_as_null(self):
-        """Absence means 'use my tier's default'; null would not."""
-        from simudyne.resources.validation import _build_config
+    def test_the_legacy_aliases_are_gone(self):
+        """run_* and l2_only/plot_data were two names for one thing."""
+        for dead in ("run_metrics", "run_impact", "run_stylised_facts",
+                     "run_inception_distances", "l2_only", "plot_data",
+                     "historical_output"):
+            with pytest.raises((TypeError, ValueError)):
+                ValidationResource(FakeClient()).run(
+                    sim_ids=SIM_IDS, **IDENTITY, **{dead: True}
+                )
 
-        assert "volume_correlation" not in _build_config(
-            **self.BASE, volume_correlation=None
+
+class TestSubmitOnly:
+    """run submits and returns. A real day takes minutes, which is far too
+    long to hold a request open, so status is get_job's job."""
+
+    def test_it_returns_the_submission_without_waiting(self):
+        client, result = _run([{"job_id": "v1", "status": "pending"}])
+        assert result == {"job_id": "v1", "status": "pending"}
+        assert [c[0] for c in client.calls] == ["POST"]
+
+    def test_a_missing_job_id_is_an_error(self):
+        with pytest.raises(ValueError, match="no job_id"):
+            _run([{"detail": "nope"}])
+
+    def test_it_does_not_poll(self):
+        assert not hasattr(ValidationResource, "_await")
+        import inspect
+
+        params = inspect.signature(ValidationResource.run).parameters
+        assert "poll_interval" not in params
+        assert "timeout" not in params
+
+
+class TestPlots:
+    """Figures arrive with the result, so get_job is what writes them."""
+
+    @staticmethod
+    def _fetch(responses, **kwargs):
+        client = FakeClient(responses)
+        return ValidationResource(client).get_job("v1", **kwargs)
+
+    def test_plots_requested_on_the_run_go_in_the_config(self):
+        client, _ = _run([{"job_id": "v1"}], plots=["statistical.radar"])
+        assert client.calls[0][2]["json"]["config"]["plots"] == ["statistical.radar"]
+
+    def test_nothing_is_written_when_the_job_has_no_plots(self, tmp_path):
+        job = self._fetch([_done()], plot_dir=str(tmp_path))
+        assert "plot_paths" not in job
+        assert list(tmp_path.iterdir()) == []
+
+    def test_plots_are_written_to_plot_dir(self, tmp_path):
+        target = tmp_path / "figs"
+        job = self._fetch(
+            [_done(plots={"distances": [{"name": "l1", "content_base64": PNG}]})],
+            plot_dir=str(target),
         )
+        assert job["plot_paths"] == [str(target / "l1.png")]
+        assert (target / "l1.png").read_bytes().startswith(b"\x89PNG")
+
+    def test_plot_dir_is_created_if_absent(self, tmp_path):
+        target = tmp_path / "a" / "b"
+        self._fetch(
+            [_done(plots={"distances": [{"name": "l1", "content_base64": PNG}]})],
+            plot_dir=str(target),
+        )
+        assert (target / "l1.png").is_file()
+
+    def test_without_plot_dir_they_land_in_the_current_directory(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        job = self._fetch(
+            [_done(plots={"distances": [{"name": "radar", "content_base64": PNG}]})]
+        )
+        assert job["plot_paths"] == [str(tmp_path / "radar.png")]
+        assert (tmp_path / "radar.png").is_file()
+
+
+class TestOneEntryPoint:
+    def test_the_extra_run_methods_are_gone(self):
+        for dead in ("run_pipeline", "run_upload", "display_plots",
+                     "inception_distances"):
+            assert not hasattr(ValidationResource, dead)
+
+    def test_retrieval_still_works(self):
+        client = FakeClient([{"job_id": "v1"}, {"jobs": [], "total": 0}])
+        res = ValidationResource(client)
+        res.get_job("v1")
+        res.list_jobs(limit=5)
+        assert client.calls[0][:2] == ("GET", "/validation/jobs/v1")
+        assert client.calls[1][2]["params"] == {"limit": 5}
 
 
 class TestSimulatedFrameShapes:
-    """run_upload takes a path, a (name, bytes) pair, or a DataFrame."""
+    """sim_files takes a path, a (name, bytes) pair, or a DataFrame."""
 
-    def test_tuple_passes_through(self):
-        from simudyne.resources.validation import _frame_to_parquet
+    def _files_sent(self, entries):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(sim_files=entries, **IDENTITY)
+        return client.calls[0][2]["files"]
 
-        assert _frame_to_parquet(("a.parquet", b"raw"), 0) == ("a.parquet", b"raw")
+    def test_pair(self):
+        assert self._files_sent([("a.parquet", b"x")])[0][1] == ("a.parquet", b"x")
 
     def test_path(self, tmp_path):
-        import pandas as pd
-
-        from simudyne.resources.validation import _frame_to_parquet
-
-        p = tmp_path / "run.parquet"
-        pd.DataFrame({"a": [1, 2]}).to_parquet(p)
-        name, content = _frame_to_parquet(str(p), 0)
-        assert name == "run.parquet"
-        assert content[:4] == b"PAR1"
-
-    def test_pandas_frame(self):
-        import pandas as pd
-
-        from simudyne.resources.validation import _frame_to_parquet
-
-        name, content = _frame_to_parquet(pd.DataFrame({"a": [1, 2]}), 3)
-        assert name == "sim_3.parquet"
-        assert content[:4] == b"PAR1"
-
-    def test_polars_frame(self):
-        pl = pytest.importorskip("polars")
-
-        from simudyne.resources.validation import _frame_to_parquet
-
-        name, content = _frame_to_parquet(pl.DataFrame({"a": [1, 2]}), 1)
-        assert name == "sim_1.parquet"
-        assert content[:4] == b"PAR1"
+        p = tmp_path / "sim.parquet"
+        p.write_bytes(b"data")
+        assert self._files_sent([str(p)])[0][1] == ("sim.parquet", b"data")
 
     def test_each_frame_gets_its_own_name(self):
-        """Distinct names, or the multipart upload collapses the runs."""
-        import pandas as pd
-
-        from simudyne.resources.validation import _frame_to_parquet
-
-        frames = [pd.DataFrame({"a": [i]}) for i in range(3)]
-        names = [_frame_to_parquet(f, i)[0] for i, f in enumerate(frames)]
-        assert len(set(names)) == 3
+        pd = pytest.importorskip("pandas")
+        frames = [pd.DataFrame({"a": [1]}), pd.DataFrame({"a": [2]})]
+        names = [f[1][0] for f in self._files_sent(frames)]
+        assert names == ["sim_0.parquet", "sim_1.parquet"]

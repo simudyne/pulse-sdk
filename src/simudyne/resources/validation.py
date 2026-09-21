@@ -1,39 +1,44 @@
 """
 Validation Resource for the Pulse SDK.
 
-This module provides methods for validating simulation quality by comparing
-simulated LOB data against historical data using distributional metrics,
-impact response analysis, stylised facts, and the MIND/FID inception distances
-on DeepLOB embeddings.
+Compares simulated LOB data against a historical day using distributional
+metrics, impact response, Cont's stylised facts, cross-level volume
+correlation, and the MIND/FID inception distances on DeepLOB embeddings.
 
-Workflow:
-    1. Submit a validation job with run() -> returns job_id
-    2. Poll status with get_job(job_id) or use run_pipeline() for blocking
-    3. View results including distances and plots
-    4. List past jobs with list_jobs()
+Submit, then poll::
 
-For the inception distances alone, inception_distances() is a one-call
-shortcut that returns just the MIND and FID scores.
+    job = client.validation.run(
+        symbol="BARC", date="2026-06-17", provider="bmll", exchange="lse",
+        sim_ids=[...], ticksize=0.05,
+    )
+    result = client.validation.get_job(job["job_id"])
+    result["distances"]["spread"]["l1"]        # per simulation
+    result["stylised_fact_verdicts"]["heavy_tails"]
 
-Tri-state run flags
+``run`` submits and returns; a validation of a real day takes minutes, so
+``get_job`` is the status endpoint you call until it is done. ``list_jobs``
+reaches past runs.
+
+Selecting metrics
+-----------------
+One flag per metric — ``statistical``, ``stylised_facts``, ``impact``,
+``volume_correlation``, ``fid``, ``mind``. Left as ``None`` each takes the
+default for your tier, resolved server-side, so naming none behaves exactly as
+your account is entitled to. Pass ``False`` to skip an expensive pass or
+``True`` to force one on.
+
+The historical gate
 -------------------
-``run_metrics`` / ``run_impact`` / ``run_stylised_facts`` / ``plot_data``
-default to ``None``, meaning "use the default for my tier" — resolved
-server-side. Demo turns everything on; other tiers get metrics and stylised
-facts. Only flags you set explicitly are sent, so a demo key is not silently
-opted out of the passes it is entitled to. Pass ``False`` to skip an expensive
-pass, or ``True`` to force one on.
-
-``run_inception_distances`` is the exception: it defaults to ``True``, so MIND
-and FID are computed unless you opt out. It maps to the API's ``run_fid``
-config field, which gates both metrics because they share one DeepLOB
-embedding pass. As of pulse-api-pod 1.56.0 the scores are returned to every
-validation tier; on older API deployments they reach the demo tier only.
+Whether the historical half of the comparison comes back — the series in the
+JSON *and* the historical trace on any rendered plot — is decided by your tier,
+not by a parameter here. What is never gated: the L1 and Wasserstein
+``distances``, the FID and MIND scores, and the true/false
+``stylised_fact_verdicts`` for both the historical day and each simulation.
+Those are derived scalars and booleans, not series, so every tier receives
+them.
 """
 
-import base64
 import json
-import time
 from pathlib import Path
 
 
@@ -45,30 +50,21 @@ JOBS_PATH = "/validation/jobs"
 #: fails before any bytes are uploaded.
 MAX_SIM_FILES = 25
 
-#: Flags the API resolves from the caller's tier when left unset.
-_TRI_STATE_FLAGS = (
-    "run_metrics",
-    "run_impact",
-    "run_stylised_facts",
-    "plot_data",
+#: One flag per area of checking. Left unset each takes the server's default.
+_AREA_FLAGS = (
+    "statistical",
+    "stylised_facts",
+    "impact",
+    "volume_correlation",
+    "fid",
+    "mind",
 )
 
-#: Areas of checking selectable per job, as of pulse-check 1.10.0. Left unset
-#: they take the server's default, so a job that names none behaves as before.
-_AREA_FLAGS = ("statistical", "stylised_facts", "impact", "volume_correlation",
-               "fid", "mind")
-
-#: Everything else the 1.10.0 schema accepts. ``lob`` marks the frames as L2
-#: snapshots, which switches off anything needing the message stream;
-#: ``sample_period`` and ``match_generated_sample`` set the grid the book is
-#: resampled onto; ``plots`` is False, True, or a list of plot ids;
-#: ``historical_output`` is the demo-only gate that ``plot_data`` used to be.
-_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots",
-                 "historical_output")
-
-#: SDK name -> API config field. The API kept ``run_fid`` for compatibility;
-#: the SDK spells out what it actually gates.
-_INCEPTION_WIRE_FIELD = "run_fid"
+#: ``lob`` marks the frames as L2 snapshots, which switches off anything
+#: needing the message stream; ``sample_period`` and ``match_generated_sample``
+#: set the grid the book is resampled onto; ``plots`` is False, True, or a list
+#: of plot ids.
+_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots")
 
 
 def _frame_to_parquet(entry, index: int):
@@ -103,41 +99,19 @@ def _frame_to_parquet(entry, index: int):
     return path.name, path.read_bytes()
 
 
-def _build_config(
-    run_metrics,
-    run_impact,
-    run_inception_distances,
-    run_stylised_facts,
-    plot_data,
-    n_levels,
-    l2_only,
-    **extra,
-) -> dict:
-    """The validation config object as the API expects it.
+def _build_config(n_levels, **flags) -> dict:
+    """The validation config as the API expects it.
 
-    Tri-state flags left as None are omitted rather than sent as null: the API
-    reads absence as "use my tier's default", and an explicit null would not
-    do that. The same rule covers the 1.10.0 area flags and everything in
-    ``extra`` — naming nothing new leaves the job behaving exactly as before.
+    Flags left as ``None`` are omitted rather than sent as null: the API reads
+    absence as "use my tier's default", and an explicit null would not do that.
     """
-    config = {
-        "n_levels": n_levels,
-        "l2_only": l2_only,
-        _INCEPTION_WIRE_FIELD: run_inception_distances,
-    }
-    for flag, value in zip(
-        _TRI_STATE_FLAGS,
-        (run_metrics, run_impact, run_stylised_facts, plot_data),
-    ):
-        if value is not None:
-            config[flag] = value
-
+    config = {"n_levels": n_levels}
     for name in _AREA_FLAGS + _EXTRA_FIELDS:
-        value = extra.get(name)
+        value = flags.get(name)
         if value is not None:
             config[name] = value
 
-    unknown = set(extra) - set(_AREA_FLAGS) - set(_EXTRA_FIELDS)
+    unknown = set(flags) - set(_AREA_FLAGS) - set(_EXTRA_FIELDS)
     if unknown:
         raise ValueError(
             f"Unknown validation option(s): {sorted(unknown)}. "
@@ -146,7 +120,34 @@ def _build_config(
     return config
 
 
+def _save_plots(result: dict, plot_dir=None) -> list:
+    """Write the returned figures to disk and return the paths written.
+
+    The API sends rendered plots base64-encoded in the response. Left to
+    itself that is bytes you cannot look at, so when plots were asked for they
+    are written out: to ``plot_dir`` when given, otherwise the current
+    directory. The directory is created if it does not exist.
+    """
+    import base64
+
+    target = Path(plot_dir) if plot_dir is not None else Path.cwd()
+    target.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for category, entries in (result.get("plots") or {}).items():
+        for entry in entries or []:
+            content = entry.get("content_base64")
+            if not content:
+                continue
+            path = target / f"{entry.get('name') or category}.png"
+            path.write_bytes(base64.b64decode(content))
+            written.append(str(path))
+    return written
+
+
 class ValidationResource:
+    """Validate simulated market data against a historical day."""
+
     def __init__(self, client):
         self._client = client
 
@@ -154,269 +155,100 @@ class ValidationResource:
         self,
         symbol: str,
         date: str,
-        sim_ids: list[str],
+        provider: str,
+        exchange: str,
+        *,
+        sim_ids=None,
+        sim_files=None,
         ticksize: float = 1.0,
-        run_metrics: bool = None,
-        run_impact: bool = None,
-        run_inception_distances: bool = True,
-        run_stylised_facts: bool = None,
-        plot_data: bool = None,
+        statistical=None,
+        stylised_facts=None,
+        impact=None,
+        volume_correlation=None,
+        fid=None,
+        mind=None,
+        lob=None,
+        sample_period=None,
+        match_generated_sample=None,
         n_levels: int = 10,
-        l2_only: bool = False,
-        provider: str = None,
-        exchange: str = None,
-        statistical: bool = None,
-        stylised_facts: bool = None,
-        impact: bool = None,
-        volume_correlation: bool = None,
-        fid: bool = None,
-        mind: bool = None,
-        lob: bool = None,
-        sample_period: str = None,
-        match_generated_sample: bool = None,
         plots=None,
-        historical_output: bool = None,
     ) -> dict:
         """Submit a validation job.
 
-        Compares simulation output against historical market data using
-        distributional distance metrics (L1, Wasserstein), impact response
-        curves, Cont stylised facts, and the MIND/FID inception distances.
-
-        Historical data is fetched automatically based on symbol and date.
-        Simulation data is fetched from each sim_id's sim_data.parquet.
+        Returns as soon as the job is accepted. Poll :meth:`get_job` for
+        status and, once it is complete, the result — a validation of a real
+        day takes minutes, which is far too long to hold a request open.
 
         Parameters
         ----------
         symbol : str
-            Trading symbol (e.g. "700.HK")
+            Trading symbol, e.g. ``"BARC"`` or ``"700.HK"``.
         date : str
-            Calibration date in YYYY-MM-DD format (e.g. "2025-09-01")
-        sim_ids : list[str]
-            List of simulation IDs to validate (max 25)
-        ticksize : float, default 1.0
-            Tick size for the symbol
-        run_metrics : bool, optional
-            Compute L1/Wasserstein distributional distances
-            (None = tier default)
-        run_impact : bool, optional
-            Compute Bouchaud impact response curves for each
-            simulated run (None = tier default). Runs on every tier as of
-            pulse 2.17.0 / pulse-api-pod 1.62.0; the historical curve is
-            additionally included on demo (plot_data) jobs. Older API
-            deployments only compute it when plot_data is on.
-        run_inception_distances : bool, default True
-            Compute MIND *and* FID on DeepLOB
-            embeddings (default True). One flag gates both — they share a
-            single embedding pass. Sent as the API's ``run_fid`` field.
-            Scores are returned to every validation tier (API >= 1.56.0;
-            demo-only before that).
-        run_stylised_facts : bool, optional
-            Compute the 11 Cont stylised facts
-            (None = tier default)
-        plot_data : bool, optional
-            Store the raw data behind every plot — distribution
-            histograms, full stylised-fact payloads, impact curves.
-            **Demo tier only**; an explicit True from any other tier is
-            rejected with 403. When off, the job returns distances and the
-            per-fact verdicts only.
-        n_levels : int, default 10
-            Number of L2 book levels to use. The inception distances
-            need all 10.
-        l2_only : bool, default False
-            Restrict to metrics that need only bid/ask price+size.
-            Disables the impact response.
-        provider : str, optional
-            Data provider (e.g. "omd"). Defaults to the prefix parsed
-            from sim_ids[0].
-        exchange : str, optional
-            Exchange protocol (e.g. "hkex_securities"). Defaults to
-            the prefix parsed from sim_ids[0].
-        statistical : bool, optional
-            Area flag (pulse-check 1.10.0): run the statistical checks. Every
-            area flag left unset takes the server's default, so a job that
-            names none behaves exactly as it did before 1.10.0.
-        stylised_facts : bool, optional
-            Area flag: run the Cont stylised facts. Distinct from
-            ``run_stylised_facts``, which is the older tri-state pass toggle.
-        impact : bool, optional
-            Area flag: run the Bouchaud impact response. Distinct from
-            ``run_impact``, for the same reason.
-        volume_correlation : bool, optional
-            Area flag: run the volume-correlation checks.
-        fid : bool, optional
-            Area flag: compute the Frechet Inception Distance.
-        mind : bool, optional
-            Area flag: compute the Monge Inception Distance.
-        lob : bool, optional
-            Mark the supplied frames as L2 snapshots, which switches off
-            everything that needs the message stream.
-        sample_period : str, optional
-            The grid the book is resampled onto, e.g. "1s".
-        match_generated_sample : bool, optional
-            Resample the historical side onto the same grid as the generated
-            frames.
-        plots : bool or list of str, optional
-            False, True, or a list of plot ids to render.
-        historical_output : bool, optional
-            The demo-only gate that ``plot_data`` used to be.
-
-        Returns
-        -------
-        dict with job_id, status, message
-        """
-        config = _build_config(
-            run_metrics, run_impact, run_inception_distances,
-            run_stylised_facts, plot_data, n_levels, l2_only,
-            statistical=statistical,
-            stylised_facts=stylised_facts,
-            impact=impact,
-            volume_correlation=volume_correlation,
-            fid=fid,
-            mind=mind,
-            lob=lob,
-            sample_period=sample_period,
-            match_generated_sample=match_generated_sample,
-            plots=plots,
-            historical_output=historical_output,
-        )
-
-        payload = {
-            "symbol": symbol,
-            "date": date,
-            "sim_ids": sim_ids,
-            "ticksize": ticksize,
-            "config": config,
-        }
-        if provider is not None:
-            payload["provider"] = provider
-        if exchange is not None:
-            payload["exchange"] = exchange
-
-        return self._client._request("POST", RUN_PATH, json=payload)
-
-    def run_upload(
-        self,
-        symbol: str,
-        date: str,
-        provider: str,
-        exchange: str,
-        sim_files: list,
-        ticksize: float = 1.0,
-        run_metrics: bool = None,
-        run_impact: bool = None,
-        run_inception_distances: bool = True,
-        run_stylised_facts: bool = None,
-        plot_data: bool = None,
-        n_levels: int = 10,
-        l2_only: bool = False,
-        statistical: bool = None,
-        stylised_facts: bool = None,
-        impact: bool = None,
-        volume_correlation: bool = None,
-        fid: bool = None,
-        mind: bool = None,
-        lob: bool = None,
-        sample_period: str = None,
-        match_generated_sample: bool = None,
-        plots=None,
-        historical_output: bool = None,
-    ) -> dict:
-        """Submit a validation job from simulation files you hold yourself.
-
-        Same scoring as run(), for output that is not stored in Pulse —
-        parquets from your own systems, a local engine build, or a different
-        generator entirely. The historical side is still fetched server-side,
-        so only the simulated frames are uploaded.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading symbol, e.g. "700.HK".
-        date : str
-            Calibration date in YYYY-MM-DD format.
+            Calibration date, ``"YYYY-MM-DD"``. The historical day compared
+            against.
         provider : str
-            Data provider, e.g. "omd". Required — with no sim_ids to parse it
-            from, it is the only way to identify the historical day.
+            Data provider, ``"bmll"`` or ``"omd"``. Required: the same symbol
+            exists under both with different dates and tick sizes, so
+            ``(symbol, provider, exchange)`` is the identity, not the symbol.
         exchange : str
-            Exchange protocol, e.g. "hkex_securities". Required, same reason.
-        sim_files : list
-            1-25 simulated frames, each either a path to a parquet file or a
-            ``(filename, bytes)`` pair for frames already in memory.
+            Exchange, e.g. ``"lse"`` or ``"hkex_securities"``.
+        sim_ids : list of str, optional
+            Platform simulation IDs, 1 to 25. Exactly one of ``sim_ids`` or
+            ``sim_files`` is required.
+        sim_files : list, optional
+            Your own simulated runs, up to 25: paths, ``(filename, bytes)``
+            pairs, or polars / pandas DataFrames in pulse format. The
+            historical side is fetched for you.
         ticksize : float, default 1.0
-            Tick size for the symbol.
-
-        Notes
-        -----
-        The run flags mean exactly what they mean on :meth:`run`.
-        run_metrics : bool, optional
-            Compute L1/Wasserstein distributional distances. Tri-state: left
-            unset the API resolves it from your tier.
-        run_impact : bool, optional
-            Compute Bouchaud impact response curves. Tri-state.
-        run_inception_distances : bool, default True
-            Compute MIND and FID on DeepLOB embeddings. One flag gates both,
-            and unlike the others it defaults to on.
-        run_stylised_facts : bool, optional
-            Compute the eleven Cont stylised facts and their verdicts.
-            Tri-state.
-        plot_data : bool, optional
-            Store the raw data behind every plot. Demo tier only.
-        n_levels : int, default 10
-            L2 book levels to use. The inception distances need all 10.
-        l2_only : bool, default False
-            Restrict to metrics needing only bid/ask price and size. Disables
-            the impact pass.
-        statistical : bool, optional
-            Area flag (pulse-check 1.10.0): run the statistical checks. Every
-            area flag left unset takes the server's default, so a job that
-            names none behaves exactly as it did before 1.10.0.
-        stylised_facts : bool, optional
-            Area flag: run the Cont stylised facts. Distinct from
-            ``run_stylised_facts``, which is the older tri-state pass toggle.
-        impact : bool, optional
-            Area flag: run the Bouchaud impact response. Distinct from
-            ``run_impact``, for the same reason.
-        volume_correlation : bool, optional
-            Area flag: run the volume-correlation checks.
-        fid : bool, optional
-            Area flag: compute the Frechet Inception Distance.
-        mind : bool, optional
-            Area flag: compute the Monge Inception Distance.
+            Minimum price increment. Should match the instrument.
+        statistical, stylised_facts, impact, volume_correlation, fid, mind : bool, optional
+            Whether to run each area. ``None`` uses your tier's default.
         lob : bool, optional
-            Mark the supplied frames as L2 snapshots, which switches off
-            everything that needs the message stream.
+            The frames are L2 snapshots. Anything needing the message stream
+            is skipped, with the reason reported in
+            ``metadata["areas_skipped"]``.
         sample_period : str, optional
-            The grid the book is resampled onto, e.g. "1s".
+            The grid the book is resampled onto in lob mode, e.g. ``"1s"``.
+            Omitted, the cadence is read off your generated frames; if those
+            are event-level there is no grid to match and nothing is
+            resampled.
         match_generated_sample : bool, optional
-            Resample the historical side onto the same grid as the generated
-            frames.
+            Match the generated frames' grid even when ``sample_period`` is
+            given.
+        n_levels : int, default 10
+            Book levels to measure over.
         plots : bool or list of str, optional
-            False, True, or a list of plot ids to render.
-        historical_output : bool, optional
-            The demo-only gate that ``plot_data`` used to be.
+            ``None`` or ``False`` for none, ``True`` for every figure, or plot
+            ids such as ``["statistical.radar", "stylised_facts.overall"]``.
+            Rendered server-side; :meth:`get_job` writes them to disk.
 
         Returns
         -------
-        dict with job_id, status, message
+        dict
+            ``{"job_id": str, "status": str, "message": str}``. Pass the
+            job_id to :meth:`get_job`.
 
         Raises
         ------
         ValueError
-            before any request, if sim_files is empty or has more
-            than 25 entries.
+            If the parameters are invalid.
         """
-        if not sim_files:
-            raise ValueError("sim_files is empty — supply 1 to 25 files")
-        if len(sim_files) > MAX_SIM_FILES:
-            raise ValueError(
-                f"{len(sim_files)} sim_files — the API accepts at most "
-                f"{MAX_SIM_FILES} per validation job"
-            )
+        if (sim_ids is None) == (sim_files is None):
+            raise ValueError("Pass exactly one of sim_ids or sim_files")
+        if sim_ids is not None and not sim_ids:
+            raise ValueError("sim_ids must not be empty")
+        if sim_files is not None and not sim_files:
+            raise ValueError("sim_files must not be empty")
+        count = len(sim_ids if sim_ids is not None else sim_files)
+        if count > MAX_SIM_FILES:
+            raise ValueError(f"Maximum {MAX_SIM_FILES} simulations per validation job")
+        if ticksize <= 0:
+            raise ValueError("ticksize must be positive")
+        if n_levels < 1:
+            raise ValueError("n_levels must be at least 1")
 
         config = _build_config(
-            run_metrics, run_impact, run_inception_distances,
-            run_stylised_facts, plot_data, n_levels, l2_only,
+            n_levels,
             statistical=statistical,
             stylised_facts=stylised_facts,
             impact=impact,
@@ -427,396 +259,88 @@ class ValidationResource:
             sample_period=sample_period,
             match_generated_sample=match_generated_sample,
             plots=plots,
-            historical_output=historical_output,
         )
 
-        files = []
-        for index, entry in enumerate(sim_files):
-            filename, content = _frame_to_parquet(entry, index)
-            files.append(
-                ("sim_files", (filename, content, "application/octet-stream"))
+        if sim_ids is not None:
+            submitted = self._client._request(
+                "POST",
+                RUN_PATH,
+                json={
+                    "symbol": symbol,
+                    "date": date,
+                    "provider": provider,
+                    "exchange": exchange,
+                    "sim_ids": list(sim_ids),
+                    "ticksize": ticksize,
+                    "config": config,
+                },
+            )
+        else:
+            files = [
+                ("sim_files", _frame_to_parquet(entry, i))
+                for i, entry in enumerate(sim_files)
+            ]
+            submitted = self._client._request(
+                "POST",
+                UPLOAD_PATH,
+                files=files,
+                data={
+                    "symbol": symbol,
+                    "date": date,
+                    "provider": provider,
+                    "exchange": exchange,
+                    "ticksize": str(ticksize),
+                    "config": json.dumps(config),
+                },
             )
 
-        data = {
-            "symbol": symbol,
-            "date": date,
-            "provider": provider,
-            "exchange": exchange,
-            "ticksize": str(ticksize),
-            "config": json.dumps(config),
-        }
-        return self._client._request("POST", UPLOAD_PATH, files=files, data=data)
+        if not (submitted or {}).get("job_id"):
+            raise ValueError(f"Validation API returned no job_id: {submitted}")
+        return submitted
 
-    def get_job(self, job_id: str) -> dict:
-        """Get validation job status and results.
+
+    def get_job(self, job_id: str, plot_dir=None) -> dict:
+        """Fetch a validation job's status, and its result once it is done.
+
+        This is the status endpoint: call it until ``status`` is
+        ``"completed"`` or ``"failed"``.
 
         Parameters
         ----------
         job_id : str
-            The job ID returned by run()
+            From :meth:`run`.
+        plot_dir : str or Path, optional
+            Where to write any figures the job rendered. Defaults to the
+            current directory; created if it does not exist. Only has an
+            effect once the job is complete and only if ``plots`` was set on
+            the run. The paths written come back in ``plot_paths``.
 
         Returns
         -------
-        dict with
-            - status: "pending", "running", "completed", or "failed"
-            - distances: {metric: {l1: [...], w: [...]}} — every entitled tier
-            - stylised_fact_verdicts: {fact: {historical: bool | None,
-            simulated: [bool | None, ...]}} — every entitled tier
-            - mind_scores: one Monge Inception Distance per sim run, in sim_ids
-            order; None where a run could not be embedded. Every validation
-            tier (API >= 1.56.0)
-            - fid_scores: one Frechet Inception Distance per sim run, same
-            ordering and tier rule. Since pulse-check 1.8.0 this is the
-            embedding-space FID — not comparable with values stored by older
-            jobs
-            - impact_response: Bouchaud response curves — lags and events are
-            the axes, and simulated holds one {ys, ci_low, ci_high} block
-            per run, indexed [event][lag]. Every tier (pulse-api-pod >=
-            1.62.0); the historical block appears on demo plot_data jobs only
-            - impact_response_error: set when the impact pass was requested
-            but failed, so a null impact_response can be told apart from one
-            never asked for
-            - distributions / stylised_facts: the full historical-derived
-            payloads. Demo tier, plot_data jobs only
-            - plots: {distributions: [...], distances: [...],
-            impact_response: [...]} of {name, content_base64}
-            - metadata: dict with run parameters
-            - error: error message (when failed)
-
-            Lower MIND/FID = closer to the historical day. Neither is meaningful as
-            a bare number — see inception_distances() for how to read them.
+        dict
+            ``job_id``, ``status``, ``symbol``, ``date`` and, once complete:
+            ``metadata``, ``distances``, ``distributions``,
+            ``impact_response``, ``stylised_facts``,
+            ``stylised_fact_verdicts``, ``volume_correlation``,
+            ``fid_scores``, ``mind_scores`` — enough to rebuild every figure —
+            plus ``plot_paths`` when figures were written.
         """
-        return self._client._request("GET", f"{JOBS_PATH}/{job_id}")
+        job = self._client._request("GET", f"{JOBS_PATH}/{job_id}")
+        if (job or {}).get("plots"):
+            job["plot_paths"] = _save_plots(job, plot_dir)
+        return job
 
     def list_jobs(self, limit: int = 50) -> dict:
-        """List validation jobs for the current user.
+        """List your validation jobs, newest first.
 
         Parameters
         ----------
         limit : int, default 50
-            Max number of jobs to return (default 50, max 200)
+            Maximum number of jobs to return.
 
         Returns
         -------
-        dict with jobs list and total count
+        dict
+            ``{"jobs": list, "total": int}``.
         """
         return self._client._request("GET", JOBS_PATH, params={"limit": limit})
-
-    def run_pipeline(
-        self,
-        symbol: str,
-        date: str,
-        sim_ids: list[str],
-        ticksize: float = 1.0,
-        run_metrics: bool = None,
-        run_impact: bool = None,
-        run_inception_distances: bool = True,
-        run_stylised_facts: bool = None,
-        plot_data: bool = None,
-        n_levels: int = 10,
-        l2_only: bool = False,
-        provider: str = None,
-        exchange: str = None,
-        poll_interval: float = 3.0,
-        timeout: float = 600.0,
-        statistical: bool = None,
-        stylised_facts: bool = None,
-        impact: bool = None,
-        volume_correlation: bool = None,
-        fid: bool = None,
-        mind: bool = None,
-        lob: bool = None,
-        sample_period: str = None,
-        match_generated_sample: bool = None,
-        plots=None,
-        historical_output: bool = None,
-    ) -> dict:
-        """Submit a validation job and block until it completes.
-
-        Combines run() + polling get_job() into a single call.
-        Prints progress to stderr.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading symbol (e.g. "700.HK")
-        date : str
-            Calibration date in YYYY-MM-DD format
-        sim_ids : list[str]
-            List of simulation IDs to validate (max 25)
-        ticksize : float, default 1.0
-            Tick size for the symbol
-        run_metrics : bool, optional
-            Compute L1/Wasserstein distances (None = tier default)
-        run_impact : bool, optional
-            Compute impact response curves (None = tier default)
-        run_inception_distances : bool, default True
-            Compute MIND *and* FID on DeepLOB
-            embeddings (default True) — one flag gates both
-        run_stylised_facts : bool, optional
-            Compute the Cont stylised facts
-            (None = tier default)
-        plot_data : bool, optional
-            Store the raw plottable data (demo tier only)
-        n_levels : int, default 10
-            Number of L2 book levels to use
-        l2_only : bool, default False
-            Restrict to L2-only metrics
-        provider : str, optional
-            Data provider; defaults to the sim_id prefix
-        exchange : str, optional
-            Exchange protocol; defaults to the sim_id prefix
-        poll_interval : float, default 3.0
-            Seconds between status checks (default 3)
-        timeout : float, default 600.0
-            Max seconds to wait (default 600)
-        statistical : bool, optional
-            Area flag (pulse-check 1.10.0): run the statistical checks. Every
-            area flag left unset takes the server's default, so a job that
-            names none behaves exactly as it did before 1.10.0.
-        stylised_facts : bool, optional
-            Area flag: run the Cont stylised facts. Distinct from
-            ``run_stylised_facts``, which is the older tri-state pass toggle.
-        impact : bool, optional
-            Area flag: run the Bouchaud impact response. Distinct from
-            ``run_impact``, for the same reason.
-        volume_correlation : bool, optional
-            Area flag: run the volume-correlation checks.
-        fid : bool, optional
-            Area flag: compute the Frechet Inception Distance.
-        mind : bool, optional
-            Area flag: compute the Monge Inception Distance.
-        lob : bool, optional
-            Mark the supplied frames as L2 snapshots, which switches off
-            everything that needs the message stream.
-        sample_period : str, optional
-            The grid the book is resampled onto, e.g. "1s".
-        match_generated_sample : bool, optional
-            Resample the historical side onto the same grid as the generated
-            frames.
-        plots : bool or list of str, optional
-            False, True, or a list of plot ids to render.
-        historical_output : bool, optional
-            The demo-only gate that ``plot_data`` used to be.
-
-        Returns
-        -------
-        dict with full validation results — see get_job() for the fields
-
-        Raises
-        ------
-        RuntimeError
-            If the validation job fails
-        TimeoutError
-            If the job doesn't complete within timeout
-        """
-        import sys
-
-        job = self.run(
-            symbol=symbol,
-            date=date,
-            sim_ids=sim_ids,
-            ticksize=ticksize,
-            run_metrics=run_metrics,
-            run_impact=run_impact,
-            run_inception_distances=run_inception_distances,
-            run_stylised_facts=run_stylised_facts,
-            plot_data=plot_data,
-            n_levels=n_levels,
-            l2_only=l2_only,
-            provider=provider,
-            exchange=exchange,
-            statistical=statistical,
-            stylised_facts=stylised_facts,
-            impact=impact,
-            volume_correlation=volume_correlation,
-            fid=fid,
-            mind=mind,
-            lob=lob,
-            sample_period=sample_period,
-            match_generated_sample=match_generated_sample,
-            plots=plots,
-            historical_output=historical_output,
-        )
-        job_id = job["job_id"]
-        print(f"Validation job submitted: {job_id}", file=sys.stderr)
-
-        start = time.time()
-        while True:
-            result = self.get_job(job_id)
-            status = result["status"]
-
-            if status == "completed":
-                elapsed = time.time() - start
-                print(f"Completed in {elapsed:.1f}s", file=sys.stderr)
-                return result
-            elif status == "failed":
-                raise RuntimeError(f"Validation failed: {result.get('error')}")
-
-            if time.time() - start > timeout:
-                raise TimeoutError(
-                    f"Validation job {job_id} timed out after {timeout}s"
-                )
-
-            time.sleep(poll_interval)
-
-    def inception_distances(
-        self,
-        symbol: str,
-        date: str,
-        sim_ids: list[str],
-        ticksize: float = 1.0,
-        n_levels: int = 10,
-        provider: str = None,
-        exchange: str = None,
-        poll_interval: float = 3.0,
-        timeout: float = 600.0,
-    ) -> dict:
-        """MIND and FID for each simulation, and nothing else.
-
-        A focused shortcut over run_pipeline(): keeps the inception distances
-        on and forces every other pass off, so the job does one DeepLOB embedding pass
-        and skips the metric, impact and stylised-fact work.
-
-        Both metrics are computed on 96-dim DeepLOB embeddings of 100-row L2
-        windows and need 10 book levels in the data.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading symbol (e.g. "700.HK")
-        date : str
-            Calibration date in YYYY-MM-DD format
-        sim_ids : list[str]
-            List of simulation IDs to score (max 25)
-        ticksize : float, default 1.0
-            Tick size for the symbol
-        n_levels : int, default 10
-            Number of L2 book levels (10 required for the embeddings)
-        provider : str, optional
-            Data provider; defaults to the sim_id prefix
-        exchange : str, optional
-            Exchange protocol; defaults to the sim_id prefix
-        poll_interval : float, default 3.0
-            Seconds between status checks
-        timeout : float, default 600.0
-            Max seconds to wait
-
-        Returns
-        -------
-        dict with
-            - mind: list of MIND scores, one per sim_id, None where a run could
-            not be embedded
-            - fid: list of FID scores, same ordering and convention
-            - sim_ids: the ids, so scores can be zipped back to their runs
-            - job_id: the underlying validation job
-
-        Raises
-        ------
-            RuntimeError: If the job fails, or if the scores come back empty —
-                which means the pipeline skipped them (missing torch, fewer
-                than 10 levels, unreachable checkpoint), or the API predates
-                1.56.0 and the key is not demo tier; both are silent in the
-                raw response.
-        Interpreting the scores:
-            Lower = closer to the historical day, but neither number means
-            anything on its own — only relative to a noise floor. Score a
-            real-vs-real control too (two slices of genuine market data) and
-            read a generator as a multiple of that floor. ~1x means the metric
-            cannot separate it from ordinary intraday variation.
-        """
-        result = self.run_pipeline(
-            symbol=symbol,
-            date=date,
-            sim_ids=sim_ids,
-            ticksize=ticksize,
-            run_inception_distances=True,
-            run_metrics=False,
-            run_impact=False,
-            run_stylised_facts=False,
-            n_levels=n_levels,
-            provider=provider,
-            exchange=exchange,
-            poll_interval=poll_interval,
-            timeout=timeout,
-        )
-
-        mind = result.get("mind_scores")
-        fid = result.get("fid_scores")
-        if not mind and not fid:
-            raise RuntimeError(
-                "no inception distances in the response. Either the pipeline "
-                "skipped them (torch missing, fewer than 10 book levels, or "
-                "the DeepLOB checkpoint unreachable), or the API predates "
-                "1.56.0 and this key is not demo tier."
-            )
-
-        return {
-            "mind": mind,
-            "fid": fid,
-            "sim_ids": list(sim_ids),
-            "job_id": result.get("job_id"),
-        }
-
-    def display_plots(self, result: dict) -> "PlotDisplay":
-        """Wrap a finished validation result in a plot renderer.
-
-        Parameters
-        ----------
-        result : dict
-            The result dict from :meth:`run_pipeline` or :meth:`get_job`.
-
-        Returns
-        -------
-        PlotDisplay
-            Carries ``distributions()``, ``distances()``,
-            ``impact_response()`` and ``all()``, each of which renders in
-            place and returns None.
-
-        Examples
-        --------
-        >>> plots = client.validation.display_plots(result)
-        >>> plots.distributions()    # distribution histograms
-        >>> plots.distances()        # spider plots
-        >>> plots.impact_response()  # impact response curves
-        """
-        return PlotDisplay(result)
-
-
-class PlotDisplay:
-    """Displays categorized validation plots inline in Jupyter notebooks."""
-
-    def __init__(self, result: dict):
-        plots = result.get("plots") or {}
-        self._distributions = plots.get("distributions", [])
-        self._distances = plots.get("distances", [])
-        self._impact_response = plots.get("impact_response", [])
-
-    def _show(self, plot_list, title):
-        from IPython.display import display, Image
-
-        if not plot_list:
-            print(f"No {title} plots available")
-            return
-
-        for plot in plot_list:
-            print(f"\n--- {plot['name']} ---")
-            display(Image(data=base64.b64decode(plot["content_base64"])))
-
-    def distributions(self):
-        """Display distribution histogram plots."""
-        self._show(self._distributions, "distribution")
-
-    def distances(self):
-        """Display spider plots (L1 and Wasserstein distances)."""
-        self._show(self._distances, "distance")
-
-    def impact_response(self):
-        """Display impact response plots."""
-        self._show(self._impact_response, "impact response")
-
-    def all(self):
-        """Display all plots."""
-        self.distances()
-        self.distributions()
-        self.impact_response()
