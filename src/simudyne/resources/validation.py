@@ -276,8 +276,10 @@ class ValidationResource:
                 },
             )
         else:
+            # Three-tuple parts: the content type matters to the server's
+            # multipart parser, so it is sent explicitly.
             files = [
-                ("sim_files", _frame_to_parquet(entry, i))
+                ("sim_files", (*_frame_to_parquet(entry, i), "application/octet-stream"))
                 for i, entry in enumerate(sim_files)
             ]
             submitted = self._client._request(

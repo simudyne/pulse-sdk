@@ -1,4 +1,4 @@
-"""Payload tests for the 0.8.0 surface: validation.run_upload, the fm and fix
+"""Payload tests for the 0.8.0 surface: validation.run, the fm and fix
 resources, and simulation.get_job_logs / run_lrm.
 
 No network — same recorder pattern as test_validation.py. These pin the wire
@@ -30,7 +30,7 @@ class TestRunUpload:
     def test_rejects_empty_before_any_request(self):
         client = FakeClient()
         with pytest.raises(ValueError, match="empty"):
-            ValidationResource(client).run_upload(
+            ValidationResource(client).run(
                 "700.HK", "2025-09-01", "omd", "hkex_securities", sim_files=[]
             )
         assert client.calls == []
@@ -39,18 +39,18 @@ class TestRunUpload:
         client = FakeClient()
         files = [(f"sim_{i}.parquet", b"x") for i in range(26)]
         with pytest.raises(ValueError, match="25"):
-            ValidationResource(client).run_upload(
+            ValidationResource(client).run(
                 "700.HK", "2025-09-01", "omd", "hkex_securities", sim_files=files
             )
         assert client.calls == []
 
     def test_multipart_payload_shape(self):
         client = FakeClient([{"job_id": "v1", "status": "pending"}])
-        ValidationResource(client).run_upload(
+        ValidationResource(client).run(
             "700.HK", "2025-09-01", "omd", "hkex_securities",
             sim_files=[("sim_0000.parquet", b"PARQ")],
             ticksize=0.5,
-            run_metrics=False,
+            statistical=False,
         )
         method, path, kwargs = client.calls[0]
         assert (method, path) == ("POST", "/validation/run/upload")
@@ -58,11 +58,11 @@ class TestRunUpload:
         assert data["provider"] == "omd" and data["exchange"] == "hkex_securities"
         assert data["ticksize"] == "0.5"
         config = json.loads(data["config"])
-        # explicit False sent; unset tri-state flags omitted (tier default)
-        assert config["run_metrics"] is False
-        for flag in ("run_impact", "run_stylised_facts", "plot_data"):
+        # explicit False sent; unset area flags omitted (tier default)
+        assert config["statistical"] is False
+        for flag in ("impact", "stylised_facts", "fid", "mind",
+                     "run_metrics", "plot_data"):
             assert flag not in config
-        assert config["run_fid"] is True
         [(field, (filename, content, mime))] = kwargs["files"]
         assert field == "sim_files" and filename == "sim_0000.parquet"
         assert content == b"PARQ" and mime == "application/octet-stream"
@@ -70,8 +70,8 @@ class TestRunUpload:
     def test_reads_paths_from_disk(self, tmp_path):
         p = tmp_path / "sim_0001.parquet"
         p.write_bytes(b"BYTES")
-        client = FakeClient([{}])
-        ValidationResource(client).run_upload(
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
             "700.HK", "2025-09-01", "omd", "hkex_securities", sim_files=[p]
         )
         [(_, (filename, content, _))] = client.calls[0][2]["files"]

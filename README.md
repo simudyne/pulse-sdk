@@ -33,6 +33,55 @@ pip install --pre simudyne-pulse
 Only use dev builds for testing unreleased changes; they are not guaranteed
 stable. Merge `dev` into `prod` to promote those changes to a stable release.
 
+### Working from a checkout
+
+To run the SDK from source — editing it, or using unreleased changes — install
+it editable **into the interpreter you will actually import from**. A notebook
+kernel is frequently not the python on your `$PATH`:
+
+```bash
+# in a notebook, find the right interpreter first
+import sys; print(sys.executable)
+
+# then, with that path
+<that python> -m pip install -e /path/to/pulse-sdk
+```
+
+Check which copy you loaded — this is worth doing whenever an attribute seems
+to be missing:
+
+```python
+import simudyne
+from importlib.metadata import version
+
+print(simudyne.__file__)          # should be .../pulse-sdk/src/simudyne/...
+print(version("simudyne-pulse"))
+```
+
+#### If an older install shadows it
+
+The SDK was once published under the distribution name **`simudyne`**; it is
+now **`simudyne-pulse`**. Both ship a module called `simudyne`, and the older
+one installs a real directory while the editable install only adds a path
+entry — so the old copy wins and you get errors like
+`'PulseABM' object has no attribute 'validation'` from a version that predates
+the feature. `pip list` shows both. Remove the obsolete one:
+
+```bash
+<that python> -m pip uninstall simudyne      # the old distribution
+<that python> -m pip install -e /path/to/pulse-sdk
+```
+
+### Running the tests
+
+```bash
+uv run --with pytest --with requests --with pandas --with pyarrow \
+    python -m pytest tests/ -q
+```
+
+No network: the client's `_request` is replaced with a recorder, so the tests
+assert the exact payload the API would receive.
+
 ## Quick start
 
 ```python

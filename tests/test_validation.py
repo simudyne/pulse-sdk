@@ -216,12 +216,14 @@ class TestSimulatedFrameShapes:
         return client.calls[0][2]["files"]
 
     def test_pair(self):
-        assert self._files_sent([("a.parquet", b"x")])[0][1] == ("a.parquet", b"x")
+        part = self._files_sent([("a.parquet", b"x")])[0][1]
+        assert part == ("a.parquet", b"x", "application/octet-stream")
 
     def test_path(self, tmp_path):
         p = tmp_path / "sim.parquet"
         p.write_bytes(b"data")
-        assert self._files_sent([str(p)])[0][1] == ("sim.parquet", b"data")
+        part = self._files_sent([str(p)])[0][1]
+        assert part == ("sim.parquet", b"data", "application/octet-stream")
 
     def test_each_frame_gets_its_own_name(self):
         pd = pytest.importorskip("pandas")
