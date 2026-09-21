@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.5 (2026-09-21)
+
+### Bug Fixes
+
+- **docs**: Convert the SDK docstrings to numpy style
+  ([`0008571`](https://github.com/simudyne/pulse-sdk/commit/00085715413bbe9eac1a52b5734147704cb1e01c))
+
+pulse-docs sets docstring_style: numpy in mkdocs.yml, but every docstring was Google style. griffe's
+  numpy parser does not recognise Args:/Returns:, so each one collapsed into a single
+  undifferentiated text section and the SDK reference rendered as flat prose with no parameter or
+  returns tables.
+
+- Convert 34 docstrings across simulation, validation, fm, simulator_gym, data and fix; griffe now
+  parses 132 parameters that it previously saw as body text - Types and defaults come from the real
+  signatures, so "str | None" with a None default renders as "str, optional" rather than repeating
+  itself
+
+Docstrings only: the executable code of every touched file is identical to origin/dev once
+  docstrings are stripped.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.4 (2026-09-18)
 
 ### Features
