@@ -232,6 +232,34 @@ class ValidationResource:
         exchange : str, optional
             Exchange protocol (e.g. "hkex_securities"). Defaults to
             the prefix parsed from sim_ids[0].
+        statistical : bool, optional
+            Area flag (pulse-check 1.10.0): run the statistical checks. Every
+            area flag left unset takes the server's default, so a job that
+            names none behaves exactly as it did before 1.10.0.
+        stylised_facts : bool, optional
+            Area flag: run the Cont stylised facts. Distinct from
+            ``run_stylised_facts``, which is the older tri-state pass toggle.
+        impact : bool, optional
+            Area flag: run the Bouchaud impact response. Distinct from
+            ``run_impact``, for the same reason.
+        volume_correlation : bool, optional
+            Area flag: run the volume-correlation checks.
+        fid : bool, optional
+            Area flag: compute the Frechet Inception Distance.
+        mind : bool, optional
+            Area flag: compute the Monge Inception Distance.
+        lob : bool, optional
+            Mark the supplied frames as L2 snapshots, which switches off
+            everything that needs the message stream.
+        sample_period : str, optional
+            The grid the book is resampled onto, e.g. "1s".
+        match_generated_sample : bool, optional
+            Resample the historical side onto the same grid as the generated
+            frames.
+        plots : bool or list of str, optional
+            False, True, or a list of plot ids to render.
+        historical_output : bool, optional
+            The demo-only gate that ``plot_data`` used to be.
 
         Returns
         -------
@@ -321,6 +349,52 @@ class ValidationResource:
         Notes
         -----
         The run flags mean exactly what they mean on :meth:`run`.
+        run_metrics : bool, optional
+            Compute L1/Wasserstein distributional distances. Tri-state: left
+            unset the API resolves it from your tier.
+        run_impact : bool, optional
+            Compute Bouchaud impact response curves. Tri-state.
+        run_inception_distances : bool, default True
+            Compute MIND and FID on DeepLOB embeddings. One flag gates both,
+            and unlike the others it defaults to on.
+        run_stylised_facts : bool, optional
+            Compute the eleven Cont stylised facts and their verdicts.
+            Tri-state.
+        plot_data : bool, optional
+            Store the raw data behind every plot. Demo tier only.
+        n_levels : int, default 10
+            L2 book levels to use. The inception distances need all 10.
+        l2_only : bool, default False
+            Restrict to metrics needing only bid/ask price and size. Disables
+            the impact pass.
+        statistical : bool, optional
+            Area flag (pulse-check 1.10.0): run the statistical checks. Every
+            area flag left unset takes the server's default, so a job that
+            names none behaves exactly as it did before 1.10.0.
+        stylised_facts : bool, optional
+            Area flag: run the Cont stylised facts. Distinct from
+            ``run_stylised_facts``, which is the older tri-state pass toggle.
+        impact : bool, optional
+            Area flag: run the Bouchaud impact response. Distinct from
+            ``run_impact``, for the same reason.
+        volume_correlation : bool, optional
+            Area flag: run the volume-correlation checks.
+        fid : bool, optional
+            Area flag: compute the Frechet Inception Distance.
+        mind : bool, optional
+            Area flag: compute the Monge Inception Distance.
+        lob : bool, optional
+            Mark the supplied frames as L2 snapshots, which switches off
+            everything that needs the message stream.
+        sample_period : str, optional
+            The grid the book is resampled onto, e.g. "1s".
+        match_generated_sample : bool, optional
+            Resample the historical side onto the same grid as the generated
+            frames.
+        plots : bool or list of str, optional
+            False, True, or a list of plot ids to render.
+        historical_output : bool, optional
+            The demo-only gate that ``plot_data`` used to be.
 
         Returns
         -------
@@ -496,6 +570,34 @@ class ValidationResource:
             Seconds between status checks (default 3)
         timeout : float, default 600.0
             Max seconds to wait (default 600)
+        statistical : bool, optional
+            Area flag (pulse-check 1.10.0): run the statistical checks. Every
+            area flag left unset takes the server's default, so a job that
+            names none behaves exactly as it did before 1.10.0.
+        stylised_facts : bool, optional
+            Area flag: run the Cont stylised facts. Distinct from
+            ``run_stylised_facts``, which is the older tri-state pass toggle.
+        impact : bool, optional
+            Area flag: run the Bouchaud impact response. Distinct from
+            ``run_impact``, for the same reason.
+        volume_correlation : bool, optional
+            Area flag: run the volume-correlation checks.
+        fid : bool, optional
+            Area flag: compute the Frechet Inception Distance.
+        mind : bool, optional
+            Area flag: compute the Monge Inception Distance.
+        lob : bool, optional
+            Mark the supplied frames as L2 snapshots, which switches off
+            everything that needs the message stream.
+        sample_period : str, optional
+            The grid the book is resampled onto, e.g. "1s".
+        match_generated_sample : bool, optional
+            Resample the historical side onto the same grid as the generated
+            frames.
+        plots : bool or list of str, optional
+            False, True, or a list of plot ids to render.
+        historical_output : bool, optional
+            The demo-only gate that ``plot_data`` used to be.
 
         Returns
         -------
@@ -657,18 +759,26 @@ class ValidationResource:
         }
 
     def display_plots(self, result: dict) -> "PlotDisplay":
-        """Return a PlotDisplay object for displaying validation plots.
-
-        Usage:
-            plots = client.validation.display_plots(result)
-            plots.distributions()    # show distribution histograms
-            plots.distances()        # show spider plots
-            plots.impact_response()  # show impact response plots
+        """Wrap a finished validation result in a plot renderer.
 
         Parameters
         ----------
         result : dict
-            The result dict from run_pipeline() or get_job()
+            The result dict from :meth:`run_pipeline` or :meth:`get_job`.
+
+        Returns
+        -------
+        PlotDisplay
+            Carries ``distributions()``, ``distances()``,
+            ``impact_response()`` and ``all()``, each of which renders in
+            place and returns None.
+
+        Examples
+        --------
+        >>> plots = client.validation.display_plots(result)
+        >>> plots.distributions()    # distribution histograms
+        >>> plots.distances()        # spider plots
+        >>> plots.impact_response()  # impact response curves
         """
         return PlotDisplay(result)
 
