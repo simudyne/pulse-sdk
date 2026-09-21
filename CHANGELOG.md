@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.8 (2026-09-21)
+
+### Bug Fixes
+
+- **validation**: Restore the multipart content type, and document the dev install
+  ([`deb242a`](https://github.com/simudyne/pulse-sdk/commit/deb242acfdd03462a6e86cd2bd1b8fe7052496fc))
+
+- run() was sending two-tuple file parts, dropping the application/octet-stream content type
+  run_upload used to set. The server's multipart parser cares; restored, with the test to hold it -
+  Port the run_upload tests in test_new_resources onto run(sim_files=...) and onto the
+  one-flag-per-area config - README: how to install from a checkout into the interpreter you
+  actually import from, how to check which copy you loaded, and how to clear an older `simudyne`
+  distribution shadowing the editable `simudyne-pulse` — the old one ships a real directory and wins
+  over a .pth, which surfaces as attributes missing from a version that predates them
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.7 (2026-09-21)
 
 ### Features
