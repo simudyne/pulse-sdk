@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.7 (2026-09-21)
+
+### Features
+
+- **validation**: Three endpoints, one vocabulary
+  ([`857e4c4`](https://github.com/simudyne/pulse-sdk/commit/857e4c4197c5006c3e54b9d7f5247186ec0d034a))
+
+Matches pulse-check and the API pod so the same words mean the same thing everywhere.
+
+- run submits and returns; get_job is the status endpoint; list_jobs reaches past runs.
+  run_pipeline, run_upload, display_plots, PlotDisplay and inception_distances are gone — run_upload
+  folds into run as sim_files - One flag per area: statistical, stylised_facts, impact,
+  volume_correlation, fid, mind, plus lob/sample_period/match_generated_sample. Every run_*,
+  l2_only, plot_data and historical_output alias is gone. plot_data in particular was never the
+  caller's to set: the tier decides whether the historical half comes back, and dropping the
+  parameter does not loosen that - provider and exchange are required: the same symbol exists under
+  both providers with different dates and tick sizes, so (symbol, provider, exchange) is the
+  identity - get_job takes plot_dir and writes any rendered figures to disk, defaulting to the
+  current directory, returning the paths in plot_paths
+
+822 lines to 346.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.6 (2026-09-21)
 
 ### Bug Fixes
