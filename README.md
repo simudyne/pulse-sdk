@@ -33,6 +33,35 @@ pip install --pre simudyne-pulse
 Only use dev builds for testing unreleased changes; they are not guaranteed
 stable. Merge `dev` into `prod` to promote those changes to a stable release.
 
+### Comparing named populations
+
+Simulations are often not one population but several — a foundation model and
+an ABM, or two versions of a model. Name them and the results compare them
+instead of averaging them together:
+
+```python
+job = client.validation.run(
+    symbol="TSCO", date="2026-06-23", provider="bmll", exchange="lse",
+    sim_ids={"fm": fm_ids, "abm": abm_ids},
+    plots=["statistical.radar", "stylised_facts.overall",
+           "volume_correlation.overall"],
+)
+result = client.validation.get_job(job["job_id"], plot_dir="figs")
+result["distances"]["fm"]["spread"]["l1"]
+result["stylised_fact_verdicts"]["heavy_tails"]["simulated"]["abm"]
+```
+
+`distances`, `distributions`, the verdicts and the FID/MIND scores come back
+keyed by name; the radar draws a polygon per population, the verdict table a
+column each, and volume correlation puts historical first then a heatmap per
+population. `sim_files` groups the same way.
+
+A plain list is one unnamed population and keeps the flat shape exactly as
+before. The historical day is measured once however many groups there are.
+
+`plot_all=True` draws everything the enabled areas can draw, not just the
+summaries.
+
 ### Working from a checkout
 
 To run the SDK from source — editing it, or using unreleased changes — install

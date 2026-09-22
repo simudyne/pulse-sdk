@@ -64,7 +64,8 @@ _AREA_FLAGS = (
 #: needing the message stream; ``sample_period`` and ``match_generated_sample``
 #: set the grid the book is resampled onto; ``plots`` is False, True, or a list
 #: of plot ids.
-_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots")
+_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots",
+                 "plot_all")
 
 
 def _frame_to_parquet(entry, index: int):
@@ -172,6 +173,7 @@ class ValidationResource:
         match_generated_sample=None,
         n_levels: int = 10,
         plots=None,
+        plot_all: bool = False,
     ) -> dict:
         """Submit a validation job.
 
@@ -192,13 +194,17 @@ class ValidationResource:
             ``(symbol, provider, exchange)`` is the identity, not the symbol.
         exchange : str
             Exchange, e.g. ``"lse"`` or ``"hkex_securities"``.
-        sim_ids : list of str, optional
-            Platform simulation IDs, 1 to 25. Exactly one of ``sim_ids`` or
-            ``sim_files`` is required.
-        sim_files : list, optional
+        sim_ids : list of str or dict, optional
+            Platform simulation IDs, 1 to 25. A flat list is one unnamed
+            population. A mapping — ``{"fm": [...], "abm": [...]}`` — compares
+            the named populations: distances, distributions, verdicts and
+            FID/MIND scores come back keyed by name, and the summary figures
+            draw one series per name instead of averaging them together.
+            Exactly one of ``sim_ids`` or ``sim_files`` is required.
+        sim_files : list or dict, optional
             Your own simulated runs, up to 25: paths, ``(filename, bytes)``
-            pairs, or polars / pandas DataFrames in pulse format. The
-            historical side is fetched for you.
+            pairs, or polars / pandas DataFrames in pulse format. Grouped the
+            same way as ``sim_ids``. The historical side is fetched for you.
         ticksize : float, default 1.0
             Minimum price increment. Should match the instrument.
         statistical, stylised_facts, impact, volume_correlation, fid, mind : bool, optional
@@ -221,6 +227,10 @@ class ValidationResource:
             ``None`` or ``False`` for none, ``True`` for every figure, or plot
             ids such as ``["statistical.radar", "stylised_facts.overall"]``.
             Rendered server-side; :meth:`get_job` writes them to disk.
+        plot_all : bool, default False
+            Draw everything the enabled areas can draw — every distribution and
+            every stylised fact, not just the summaries. An area switched off
+            still draws nothing, so this means "all of what ran".
 
         Returns
         -------
@@ -239,7 +249,12 @@ class ValidationResource:
             raise ValueError("sim_ids must not be empty")
         if sim_files is not None and not sim_files:
             raise ValueError("sim_files must not be empty")
-        count = len(sim_ids if sim_ids is not None else sim_files)
+        given = sim_ids if sim_ids is not None else sim_files
+        count = (
+            sum(len(v) for v in given.values())
+            if isinstance(given, dict)
+            else len(given)
+        )
         if count > MAX_SIM_FILES:
             raise ValueError(f"Maximum {MAX_SIM_FILES} simulations per validation job")
         if ticksize <= 0:
@@ -259,6 +274,7 @@ class ValidationResource:
             sample_period=sample_period,
             match_generated_sample=match_generated_sample,
             plots=plots,
+            plot_all=plot_all or None,
         )
 
         if sim_ids is not None:
@@ -270,7 +286,11 @@ class ValidationResource:
                     "date": date,
                     "provider": provider,
                     "exchange": exchange,
-                    "sim_ids": list(sim_ids),
+                    "sim_ids": (
+                        {k: list(v) for k, v in sim_ids.items()}
+                        if isinstance(sim_ids, dict)
+                        else list(sim_ids)
+                    ),
                     "ticksize": ticksize,
                     "config": config,
                 },
@@ -278,10 +298,24 @@ class ValidationResource:
         else:
             # Three-tuple parts: the content type matters to the server's
             # multipart parser, so it is sent explicitly.
+            # Grouped uploads travel flat with the grouping beside them, the
+            # same way sim_ids do — multipart has no nesting.
+            if isinstance(sim_files, dict):
+                flat, groups, offset = [], {}, 0
+                for name, runs in sim_files.items():
+                    runs = list(runs)
+                    groups[name] = list(range(offset, offset + len(runs)))
+                    offset += len(runs)
+                    flat.extend(runs)
+            else:
+                flat, groups = list(sim_files), None
+
             files = [
                 ("sim_files", (*_frame_to_parquet(entry, i), "application/octet-stream"))
-                for i, entry in enumerate(sim_files)
+                for i, entry in enumerate(flat)
             ]
+            if groups:
+                config = {**config, "sim_groups": groups}
             submitted = self._client._request(
                 "POST",
                 UPLOAD_PATH,

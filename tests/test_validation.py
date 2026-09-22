@@ -230,3 +230,56 @@ class TestSimulatedFrameShapes:
         frames = [pd.DataFrame({"a": [1]}), pd.DataFrame({"a": [2]})]
         names = [f[1][0] for f in self._files_sent(frames)]
         assert names == ["sim_0.parquet", "sim_1.parquet"]
+
+
+class TestNamedPopulations:
+    """Runs can be named so the results compare populations, not an average."""
+
+    def test_grouped_sim_ids_go_as_a_mapping(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_ids={"fm": ["a"], "abm": ["b", "c"]}, **IDENTITY
+        )
+        assert client.calls[0][2]["json"]["sim_ids"] == {
+            "fm": ["a"],
+            "abm": ["b", "c"],
+        }
+
+    def test_the_total_is_what_is_capped(self):
+        client = FakeClient()
+        with pytest.raises(ValueError, match="Maximum 25"):
+            ValidationResource(client).run(
+                sim_ids={"a": ["x"] * 13, "b": ["y"] * 13}, **IDENTITY
+            )
+        assert client.calls == []
+
+    def test_grouped_uploads_travel_flat_with_the_grouping_beside_them(self):
+        """Multipart has no nesting, so the groups go in the config."""
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_files={"fm": [("a.parquet", b"x")],
+                       "abm": [("b.parquet", b"y"), ("c.parquet", b"z")]},
+            **IDENTITY,
+        )
+        kwargs = client.calls[0][2]
+        assert len(kwargs["files"]) == 3
+        assert json.loads(kwargs["data"]["config"])["sim_groups"] == {
+            "fm": [0], "abm": [1, 2]
+        }
+
+    def test_an_ungrouped_upload_carries_no_grouping(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_files=[("a.parquet", b"x")], **IDENTITY
+        )
+        assert "sim_groups" not in json.loads(client.calls[0][2]["data"]["config"])
+
+
+class TestPlotAll:
+    def test_it_is_forwarded(self):
+        client, _ = _run([{"job_id": "v1"}], plot_all=True)
+        assert client.calls[0][2]["json"]["config"]["plot_all"] is True
+
+    def test_it_is_omitted_when_not_asked_for(self):
+        client, _ = _run([{"job_id": "v1"}])
+        assert "plot_all" not in client.calls[0][2]["json"]["config"]
