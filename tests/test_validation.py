@@ -289,3 +289,44 @@ class TestPlotEverything:
     def test_plot_all_is_gone(self):
         with pytest.raises(TypeError):
             _run([{"job_id": "v1"}], plot_all=True)
+
+
+class TestGroupShape:
+    """A group's value is a list of runs. A bare string is not one.
+
+    ``{"fm": "one.parquet"}`` is the natural thing to write for a group of
+    one, and it used to count the path's characters as runs and fail with
+    "Maximum 25 simulations per validation job" — a number the caller never
+    wrote anywhere.
+    """
+
+    @staticmethod
+    def _submit(**kwargs):
+        return ValidationResource(FakeClient([{"job_id": "v1"}])).run(
+            **{**IDENTITY, **kwargs}
+        )
+
+    def test_a_string_names_itself_not_the_file_count(self):
+        with pytest.raises(ValueError, match=r"sim_files\['fm'\] must be a list"):
+            self._submit(sim_files={"fm": "one.parquet"})
+
+    def test_the_message_shows_the_fix(self):
+        with pytest.raises(ValueError, match=r"write \['one.parquet'\]"):
+            self._submit(sim_files={"fm": "one.parquet"})
+
+    def test_sim_ids_groups_are_checked_the_same_way(self):
+        with pytest.raises(ValueError, match=r"sim_ids\['abm'\] must be a list"):
+            self._submit(sim_ids={"abm": "sim_abc"})
+
+    def test_a_non_iterable_group_is_named_plainly(self):
+        with pytest.raises(ValueError, match=r"not NoneType"):
+            self._submit(sim_ids={"abm": None})
+
+    def test_a_real_list_still_passes(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(sim_ids={"abm": ["a", "b"]}, **IDENTITY)
+        assert client.calls[0][2]["json"]["sim_ids"] == {"abm": ["a", "b"]}
+
+    def test_the_count_still_catches_too_many(self):
+        with pytest.raises(ValueError, match="Maximum 25"):
+            self._submit(sim_ids={"a": ["x"] * 13, "b": ["y"] * 13})

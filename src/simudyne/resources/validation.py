@@ -39,6 +39,7 @@ them.
 """
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 
@@ -146,7 +147,32 @@ def _save_plots(result: dict, plot_dir=None) -> list:
 
 
 class ValidationResource:
-    """Validate simulated market data against a historical day."""
+    """Score simulated market data against a real historical day.
+
+    Reached as ``client.validation``. A job compares one or more simulated runs
+    — either platform ``sim_ids`` or your own uploaded frames — against the
+    real day for the same instrument, and reports distances, distribution
+    overlaps, stylised-fact verdicts and FID/MIND scores.
+
+    Jobs are asynchronous: :meth:`run` returns a ``job_id`` and :meth:`get_job`
+    is polled until it is terminal. A validation of a real day takes minutes.
+
+    Examples
+    --------
+    >>> import time
+    >>> job = client.validation.run(
+    ...     symbol="BARC", date="2025-09-02",
+    ...     provider="bmll", exchange="lse",
+    ...     sim_ids=["sim_abc", "sim_def"],
+    ...     plots=True,
+    ... )
+    >>> while True:
+    ...     result = client.validation.get_job(job["job_id"], plot_dir="figures/")
+    ...     if result["status"] in ("completed", "failed"):
+    ...         break
+    ...     time.sleep(30)
+    >>> result["distances"]
+    """
 
     def __init__(self, client):
         self._client = client
@@ -249,7 +275,58 @@ class ValidationResource:
         Raises
         ------
         ValueError
-            If the parameters are invalid.
+            If neither or both of ``sim_ids`` and ``sim_files`` are given,
+            either is empty, more than 25 runs are passed, ``ticksize`` is not
+            positive, or ``n_levels`` is below 1. Also raised if the API
+            accepts the request but returns no ``job_id``.
+        PulseAPIError
+            If the instrument has no historical data for ``date``, a
+            ``sim_id`` is unknown, or the tier does not allow a requested
+            area.
+
+        Examples
+        --------
+        Platform simulations against the real day:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC",
+        ...     date="2025-09-02",
+        ...     provider="bmll",
+        ...     exchange="lse",
+        ...     sim_ids=["sim_abc", "sim_def"],
+        ... )
+        >>> job["job_id"]
+        'val_01H...'
+
+        Two named populations, compared against each other and the real day:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_ids={"fm": ["sim_abc"], "abm": ["sim_def", "sim_ghi"]},
+        ... )
+
+        Your own frames, with only the areas you want and selected figures:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_files=[my_dataframe],
+        ...     statistical=True,
+        ...     stylised_facts=True,
+        ...     impact=False,
+        ...     plots=["statistical.radar", "stylised_facts.overall"],
+        ... )
+
+        L2 snapshots resampled onto a one-second grid:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_files=["book_snapshots.parquet"],
+        ...     lob=True,
+        ...     sample_period="1s",
+        ... )
         """
         if (sim_ids is None) == (sim_files is None):
             raise ValueError("Pass exactly one of sim_ids or sim_files")
@@ -258,8 +335,24 @@ class ValidationResource:
         if sim_files is not None and not sim_files:
             raise ValueError("sim_files must not be empty")
         given = sim_ids if sim_ids is not None else sim_files
+        name = "sim_ids" if sim_ids is not None else "sim_files"
+        if isinstance(given, dict):
+            # A bare string is iterable, so {"fm": "one.parquet"} used to count
+            # its characters as runs and fail with "Maximum 25 simulations" —
+            # a number the caller never wrote. Say what is actually wrong.
+            for group, runs in given.items():
+                if isinstance(runs, (str, bytes)):
+                    raise ValueError(
+                        f"{name}[{group!r}] must be a list of runs, not a "
+                        f"single {type(runs).__name__} — write [{runs!r}]"
+                    )
+                if not isinstance(runs, Iterable):
+                    raise ValueError(
+                        f"{name}[{group!r}] must be a list of runs, not "
+                        f"{type(runs).__name__}"
+                    )
         count = (
-            sum(len(v) for v in given.values())
+            sum(len(list(v)) for v in given.values())
             if isinstance(given, dict)
             else len(given)
         )
@@ -367,6 +460,34 @@ class ValidationResource:
             ``stylised_fact_verdicts``, ``volume_correlation``,
             ``fid_scores``, ``mind_scores`` — enough to rebuild every figure —
             plus ``plot_paths`` when figures were written.
+
+        Raises
+        ------
+        PulseAPIError
+            If ``job_id`` is unknown or belongs to another account — status
+            404.
+
+        Examples
+        --------
+        >>> result = client.validation.get_job(job_id)
+        >>> result["status"]
+        'running'
+
+        Poll to completion, writing any figures into a directory:
+
+        >>> import time
+        >>> while True:
+        ...     result = client.validation.get_job(job_id, plot_dir="figures/")
+        ...     if result["status"] in ("completed", "failed"):
+        ...         break
+        ...     time.sleep(30)
+        >>> print(result["plot_paths"])
+        ['figures/statistical.radar.png', 'figures/stylised_facts.overall.png']
+
+        With named populations, the scores come back keyed by name:
+
+        >>> result["fid_scores"]
+        {'fm': 0.142, 'abm': 0.318}
         """
         job = self._client._request("GET", f"{JOBS_PATH}/{job_id}")
         if (job or {}).get("plots"):
@@ -384,6 +505,24 @@ class ValidationResource:
         Returns
         -------
         dict
-            ``{"jobs": list, "total": int}``.
+            Contains ``jobs``, a list of job summaries newest first, and
+            ``total``, the count before ``limit`` was applied.
+
+        Raises
+        ------
+        PulseAPIError
+            If the key is invalid, revoked or expired — status 401.
+
+        Examples
+        --------
+        >>> listing = client.validation.list_jobs(limit=10)
+        >>> for job in listing["jobs"]:
+        ...     print(job["job_id"], job["status"], job["symbol"], job["date"])
+
+        Find the most recent completed job and read it back:
+
+        >>> done = [j for j in listing["jobs"] if j["status"] == "completed"]
+        >>> newest = done[0]
+        >>> result = client.validation.get_job(newest["job_id"])
         """
         return self._client._request("GET", JOBS_PATH, params={"limit": limit})
