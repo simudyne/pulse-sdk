@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.7.3 (2026-09-22)
+
+### Bug Fixes
+
+- **sdk**: Numpy-style docstrings for the released endpoints
+  ([`11601e9`](https://github.com/simudyne/pulse-sdk/commit/11601e901867995d6d38144feca95cf2fc2d0567))
+
+Docs only — every file is byte-identical to 0.7.2 once docstrings are stripped, so no behaviour
+  changes.
+
+- Class docstrings for the 5 resources that had none, Examples sections for the methods missing one,
+  and Raises throughout - Lift examples out of Returns blocks into real Examples sections - Every
+  Raises block checked against pulse-api-pod rather than inferred: documents the 503/500 paths the
+  SDK proxies, the 400s on bulk download, and drops a claimed API-key limit that does not exist -
+  Rewrite example subscripts that mkdocs-autorefs misread as reference links, taking the pulse-sdk
+  docs build to zero warnings
+
+validation.py is left alone: its API on prod differs from dev's, so its docstrings need writing
+  against this signature rather than porting.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.2 (2026-09-21)
 
 ### Bug Fixes
