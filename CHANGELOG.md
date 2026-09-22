@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.13 (2026-09-22)
+
+### Bug Fixes
+
+- **validation**: Say what is wrong when a group is not a list
+  ([`62c0455`](https://github.com/simudyne/pulse-sdk/commit/62c0455adf51c22a3f052c18a71da0e2a88a8653))
+
+sim_files={"fm": "one.parquet"} is the natural thing to write for a group of one. A string is
+  iterable, so it counted the path's 89 characters as 89 runs and failed with "Maximum 25
+  simulations per validation job" — a number the caller never wrote anywhere.
+
+- Each group's value is checked before it is counted, and the error names the group, its type, and
+  the list to write instead. - A non-iterable group (None, an int) is named plainly rather than
+  raising TypeError out of len().
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.12 (2026-09-22)
 
 ### Bug Fixes
