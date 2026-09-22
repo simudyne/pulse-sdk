@@ -72,6 +72,7 @@ switched off draws nothing either way.
 | `stylised_facts.fact` | every fact |
 | `stylised_facts.fact.{name}` | one fact, e.g. `.heavy_tails` |
 | `impact.response` | impact response by event type |
+| `impact.event` | every event type |
 | `impact.event.{type}` | one event type |
 | `volume_correlation.levels` | level correlation heatmap |
 | `volume_correlation.changes` | change correlation heatmap |

@@ -234,8 +234,9 @@ class ValidationResource:
             - ``stylised_facts.overall`` — the verdict table
             - ``stylised_facts.fact`` — every fact;
               ``stylised_facts.fact.{name}`` for one, e.g. ``.heavy_tails``
-            - ``impact.response`` — impact response by event type;
-              ``impact.event.{type}`` for one
+            - ``impact.response`` — impact response by event type
+            - ``impact.event`` — every event type; ``impact.event.{type}``
+              for one
             - ``volume_correlation.levels``, ``volume_correlation.changes``,
               or ``volume_correlation.overall`` for both
 
