@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.11 (2026-09-22)
+
+### Features
+
+- **validation**: Drop plot_all, document the plot ids
+  ([`bd405ff`](https://github.com/simudyne/pulse-sdk/commit/bd405ffa48f273909c2b8b0e3222443b55e35400))
+
+plot_all only ever meant plots=True — the service resolved it as `True if plot_all else plots` and
+  had no other use for it, so one of the two had to go and plots is the one that can also name a
+  figure.
+
+- run(plots=...): unset draws nothing, True draws every figure the enabled areas can draw, a list
+  draws just those ids. An area switched off draws nothing either way. - The ids are now written
+  down in the docstring and the README rather than living in pulse-check's README, since naming one
+  is the whole point of the list form.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.10 (2026-09-22)
 
 ### Bug Fixes
