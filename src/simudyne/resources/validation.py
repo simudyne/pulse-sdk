@@ -108,6 +108,62 @@ def _frame_to_parquet(entry, index: int):
     return path.name, path.read_bytes()
 
 
+def _count(sims) -> int:
+    """How many runs this argument names, mapping or list."""
+    if sims is None:
+        return 0
+    if isinstance(sims, dict):
+        return sum(len(list(v)) for v in sims.values())
+    return len(sims)
+
+
+def _check_groups(sims, name: str) -> None:
+    """Every group's value is a list of runs, and a bare string is not one.
+
+    ``{"fm": "one.parquet"}`` is the natural thing to write for a group of
+    one. A string is iterable, so it used to count the path's characters as
+    runs and fail on the total — a number the caller never wrote.
+    """
+    if not isinstance(sims, dict):
+        return
+    for group, runs in sims.items():
+        if isinstance(runs, (str, bytes)):
+            raise ValueError(
+                f"{name}[{group!r}] must be a list of runs, not a "
+                f"single {type(runs).__name__} — write [{runs!r}]"
+            )
+        if not isinstance(runs, Iterable):
+            raise ValueError(
+                f"{name}[{group!r}] must be a list of runs, not "
+                f"{type(runs).__name__}"
+            )
+
+
+def _flatten(sims, *, offset: int, unnamed):
+    """``(flat runs, {name: [indices]} | None)``, indices starting at offset.
+
+    A job may draw from two sources at once: the uploaded files take the first
+    slots and the platform runs follow, so the second source's indices start
+    past the first. ``unnamed`` names a bare list so it can be a population
+    beside a named one; None leaves it ungrouped, as a single-source job has
+    always been.
+    """
+    if isinstance(sims, dict):
+        flat, groups, at = [], {}, offset
+        for name, runs in sims.items():
+            runs = list(runs)
+            if not runs:
+                raise ValueError(f"Group {name!r} has no simulations")
+            groups[name] = list(range(at, at + len(runs)))
+            at += len(runs)
+            flat.extend(runs)
+        return flat, groups
+    flat = list(sims)
+    if unnamed is None:
+        return flat, None
+    return flat, {unnamed: list(range(offset, offset + len(flat)))}
+
+
 def _build_config(n_levels, **flags) -> dict:
     """The validation config as the API expects it.
 
@@ -234,11 +290,29 @@ class ValidationResource:
             the named populations: distances, distributions, verdicts and
             FID/MIND scores come back keyed by name, and the summary figures
             draw one series per name instead of averaging them together.
-            Exactly one of ``sim_ids`` or ``sim_files`` is required.
         sim_files : list or dict, optional
-            Your own simulated runs, up to 25: paths, ``(filename, bytes)``
-            pairs, or polars / pandas DataFrames in pulse format. Grouped the
-            same way as ``sim_ids``. The historical side is fetched for you.
+            Your own simulated runs: paths, ``(filename, bytes)`` pairs, or
+            polars / pandas DataFrames in pulse format. Grouped the same way
+            as ``sim_ids``. The historical side is fetched for you.
+
+            At least one of ``sim_ids`` and ``sim_files`` is required, and
+            both together is allowed — your own model against platform runs,
+            on one set of figures. 25 runs in total across the two. With both
+            present each source is a population of its own, so a bare list
+            gets a name rather than merging into whatever else is there:
+
+            =========================== ==============================
+            passed                      populations
+            =========================== ==============================
+            files mapping + ids list    its names, plus ``platform``
+            files list + ids mapping    ``uploaded``, plus its names
+            both lists                  ``uploaded`` and ``platform``
+            both mappings               their own names
+            either one alone            exactly as before
+            =========================== ==============================
+
+            Every population is pooled and averaged, and drawn as its own
+            radar polygon, verdict-grid column and correlation heatmap.
         statistical, stylised_facts, impact, volume_correlation, fid, mind : bool, optional
             Whether to run each area. ``None`` uses your tier's default.
         lob : bool, optional
@@ -338,36 +412,19 @@ class ValidationResource:
         ...     sample_period="1s",
         ... )
         """
-        if (sim_ids is None) == (sim_files is None):
-            raise ValueError("Pass exactly one of sim_ids or sim_files")
+        if sim_ids is None and sim_files is None:
+            raise ValueError("Pass sim_ids, sim_files, or both")
         if sim_ids is not None and not sim_ids:
             raise ValueError("sim_ids must not be empty")
         if sim_files is not None and not sim_files:
             raise ValueError("sim_files must not be empty")
-        given = sim_ids if sim_ids is not None else sim_files
-        name = "sim_ids" if sim_ids is not None else "sim_files"
-        if isinstance(given, dict):
-            # A bare string is iterable, so {"fm": "one.parquet"} used to count
-            # its characters as runs and fail with "Maximum 25 simulations" —
-            # a number the caller never wrote. Say what is actually wrong.
-            for group, runs in given.items():
-                if isinstance(runs, (str, bytes)):
-                    raise ValueError(
-                        f"{name}[{group!r}] must be a list of runs, not a "
-                        f"single {type(runs).__name__} — write [{runs!r}]"
-                    )
-                if not isinstance(runs, Iterable):
-                    raise ValueError(
-                        f"{name}[{group!r}] must be a list of runs, not "
-                        f"{type(runs).__name__}"
-                    )
-        count = (
-            sum(len(list(v)) for v in given.values())
-            if isinstance(given, dict)
-            else len(given)
-        )
-        if count > MAX_SIM_FILES:
-            raise ValueError(f"Maximum {MAX_SIM_FILES} simulations per validation job")
+        _check_groups(sim_files, "sim_files")
+        _check_groups(sim_ids, "sim_ids")
+        if _count(sim_files) + _count(sim_ids) > MAX_SIM_FILES:
+            raise ValueError(
+                f"Maximum {MAX_SIM_FILES} simulations per validation job, "
+                "sim_files and sim_ids together"
+            )
         if n_levels < 1:
             raise ValueError("n_levels must be at least 1")
 
@@ -385,7 +442,10 @@ class ValidationResource:
             plots=plots,
         )
 
-        if sim_ids is not None:
+        # Platform runs alone go as JSON; anything with files of your own
+        # goes multipart, because bytes cannot travel in the JSON body. The
+        # upload endpoint takes sim_ids too, so a mixed job is one request.
+        if sim_files is None:
             submitted = self._client._request(
                 "POST",
                 RUN_PATH,
@@ -403,37 +463,38 @@ class ValidationResource:
                 },
             )
         else:
+            # The uploads take the first slots of the combined run list and
+            # the platform runs follow. Only the uploads' own grouping is sent:
+            # the server offsets the platform runs past the files and names a
+            # bare list on either side, so the offset has one implementation
+            # rather than two that can disagree.
+            flat, groups = _flatten(sim_files, offset=0, unnamed=None)
+
             # Three-tuple parts: the content type matters to the server's
             # multipart parser, so it is sent explicitly.
-            # Grouped uploads travel flat with the grouping beside them, the
-            # same way sim_ids do — multipart has no nesting.
-            if isinstance(sim_files, dict):
-                flat, groups, offset = [], {}, 0
-                for name, runs in sim_files.items():
-                    runs = list(runs)
-                    groups[name] = list(range(offset, offset + len(runs)))
-                    offset += len(runs)
-                    flat.extend(runs)
-            else:
-                flat, groups = list(sim_files), None
-
             files = [
                 ("sim_files", (*_frame_to_parquet(entry, i), "application/octet-stream"))
                 for i, entry in enumerate(flat)
             ]
+            # Multipart has no nesting, so the grouping rides in the config
+            # and the ids in a JSON string field.
             if groups:
                 config = {**config, "sim_groups": groups}
+            data = {
+                "symbol": symbol,
+                "date": date,
+                "provider": provider,
+                "exchange": exchange,
+                "config": json.dumps(config),
+            }
+            if sim_ids is not None:
+                data["sim_ids"] = json.dumps(
+                    {k: list(v) for k, v in sim_ids.items()}
+                    if isinstance(sim_ids, dict)
+                    else list(sim_ids)
+                )
             submitted = self._client._request(
-                "POST",
-                UPLOAD_PATH,
-                files=files,
-                data={
-                    "symbol": symbol,
-                    "date": date,
-                    "provider": provider,
-                    "exchange": exchange,
-                    "config": json.dumps(config),
-                },
+                "POST", UPLOAD_PATH, files=files, data=data
             )
 
         if not (submitted or {}).get("job_id"):

@@ -79,8 +79,7 @@ class TestWhatToValidate:
     @pytest.mark.parametrize(
         "kwargs,match",
         [
-            ({}, "exactly one"),
-            ({"sim_ids": SIM_IDS, "sim_files": [("a", b"x")]}, "exactly one"),
+            ({}, "Pass sim_ids, sim_files, or both"),
             ({"sim_ids": []}, "must not be empty"),
             ({"sim_ids": SIM_IDS * (MAX_SIM_FILES + 1)}, "Maximum 25"),
             ({"sim_ids": SIM_IDS, "n_levels": 0}, "at least 1"),
@@ -353,3 +352,57 @@ class TestTickSizeIsNotAsked:
         client = FakeClient([{"job_id": "v1"}])
         ValidationResource(client).run(sim_files=[("a.parquet", b"x")], **IDENTITY)
         assert "ticksize" not in client.calls[0][2]["data"]
+
+
+class TestBothSourcesAtOnce:
+    """Your own parquet and platform runs in one job.
+
+    Anything with files goes multipart, because bytes cannot travel in a JSON
+    body — so a mixed job is an upload that also names sim_ids. Only the
+    uploads' own grouping is sent: the server offsets the platform runs past
+    the files, so the offset has one implementation rather than two.
+    """
+
+    @staticmethod
+    def _submit(**kwargs):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(**{**IDENTITY, **kwargs})
+        call = client.calls[0][2]
+        return call, json.loads(call["data"]["config"])
+
+    def test_a_mixed_job_goes_to_the_upload_endpoint(self):
+        call, _ = self._submit(
+            sim_files=[("a.parquet", b"x")], sim_ids=["sim_a"]
+        )
+        assert "files" in call and call["data"]["sim_ids"] == json.dumps(["sim_a"])
+
+    def test_only_the_uploads_grouping_is_sent(self):
+        """The server owns the offset; sending both would double-count it."""
+        _, config = self._submit(
+            sim_files={"fm": [("a.parquet", b"x")]}, sim_ids={"abm": ["s"]}
+        )
+        assert config["sim_groups"] == {"fm": [0]}
+
+    def test_a_mapping_of_ids_travels_as_json(self):
+        call, _ = self._submit(
+            sim_files=[("a.parquet", b"x")], sim_ids={"abm": ["s1", "s2"]}
+        )
+        assert json.loads(call["data"]["sim_ids"]) == {"abm": ["s1", "s2"]}
+
+    def test_ids_alone_still_go_as_json(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(sim_ids=SIM_IDS, **IDENTITY)
+        assert "json" in client.calls[0][2]
+        assert "sim_ids" not in client.calls[0][2].get("data", {})
+
+    def test_neither_is_refused(self):
+        with pytest.raises(ValueError, match="Pass sim_ids, sim_files, or both"):
+            ValidationResource(FakeClient([])).run(**IDENTITY)
+
+    def test_the_cap_counts_both_sources(self):
+        with pytest.raises(ValueError, match="together"):
+            ValidationResource(FakeClient([])).run(
+                sim_files=[("a.parquet", b"x")] * 13,
+                sim_ids=["s"] * 13,
+                **IDENTITY,
+            )

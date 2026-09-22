@@ -59,6 +59,33 @@ population. `sim_files` groups the same way.
 A plain list is one unnamed population and keeps the flat shape exactly as
 before. The historical day is measured once however many groups there are.
 
+### Your own runs beside platform runs
+
+`sim_ids` and `sim_files` can be given together — your own model against
+platform simulations, on one set of figures, 25 runs in total across the two:
+
+```python
+job = client.validation.run(
+    symbol="TSCO", date="2026-06-23", provider="bmll", exchange="lse",
+    sim_files={"fm": ["my_run.parquet"]},
+    sim_ids={"abm": abm_ids},
+    plots=["statistical.radar", "stylised_facts.overall"],
+)
+```
+
+With both present each source is a population of its own, so a bare list gets
+a name rather than merging into whatever else is there:
+
+| passed | populations |
+| --- | --- |
+| files mapping + ids list | its names, plus `platform` |
+| files list + ids mapping | `uploaded`, plus its names |
+| both lists | `uploaded` and `platform` |
+| both mappings | their own names |
+| either one alone | exactly as before |
+
+The uploads are measured first and the platform runs follow.
+
 `plots` is the only plot switch: unset draws nothing, `True` draws every
 figure the enabled areas can draw, and a list draws just those ids. An area
 switched off draws nothing either way.
