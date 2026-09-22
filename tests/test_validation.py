@@ -275,11 +275,17 @@ class TestNamedPopulations:
         assert "sim_groups" not in json.loads(client.calls[0][2]["data"]["config"])
 
 
-class TestPlotAll:
-    def test_it_is_forwarded(self):
-        client, _ = _run([{"job_id": "v1"}], plot_all=True)
-        assert client.calls[0][2]["json"]["config"]["plot_all"] is True
+class TestPlotEverything:
+    """plots says it all: there is no second way to ask for every figure."""
 
-    def test_it_is_omitted_when_not_asked_for(self):
+    def test_true_is_forwarded(self):
+        client, _ = _run([{"job_id": "v1"}], plots=True)
+        assert client.calls[0][2]["json"]["config"]["plots"] is True
+
+    def test_nothing_is_sent_when_not_asked_for(self):
         client, _ = _run([{"job_id": "v1"}])
-        assert "plot_all" not in client.calls[0][2]["json"]["config"]
+        assert "plots" not in client.calls[0][2]["json"]["config"]
+
+    def test_plot_all_is_gone(self):
+        with pytest.raises(TypeError):
+            _run([{"job_id": "v1"}], plot_all=True)

@@ -59,8 +59,26 @@ population. `sim_files` groups the same way.
 A plain list is one unnamed population and keeps the flat shape exactly as
 before. The historical day is measured once however many groups there are.
 
-`plot_all=True` draws everything the enabled areas can draw, not just the
-summaries.
+`plots` is the only plot switch: unset draws nothing, `True` draws every
+figure the enabled areas can draw, and a list draws just those ids. An area
+switched off draws nothing either way.
+
+| id | figure |
+| --- | --- |
+| `statistical.radar` | distance spider, one polygon per population |
+| `statistical.distribution` | every metric's KDE |
+| `statistical.distribution.{metric}` | one metric, e.g. `.spread` |
+| `stylised_facts.overall` | the verdict table |
+| `stylised_facts.fact` | every fact |
+| `stylised_facts.fact.{name}` | one fact, e.g. `.heavy_tails` |
+| `impact.response` | impact response by event type |
+| `impact.event.{type}` | one event type |
+| `volume_correlation.levels` | level correlation heatmap |
+| `volume_correlation.changes` | change correlation heatmap |
+| `volume_correlation.overall` | both of the above |
+
+Each returned figure carries the `id` it was asked for — match on that, not on
+the filename.
 
 ### Working from a checkout
 

@@ -64,8 +64,7 @@ _AREA_FLAGS = (
 #: needing the message stream; ``sample_period`` and ``match_generated_sample``
 #: set the grid the book is resampled onto; ``plots`` is False, True, or a list
 #: of plot ids.
-_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots",
-                 "plot_all")
+_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots")
 
 
 def _frame_to_parquet(entry, index: int):
@@ -173,7 +172,6 @@ class ValidationResource:
         match_generated_sample=None,
         n_levels: int = 10,
         plots=None,
-        plot_all: bool = False,
     ) -> dict:
         """Submit a validation job.
 
@@ -224,13 +222,22 @@ class ValidationResource:
         n_levels : int, default 10
             Book levels to measure over.
         plots : bool or list of str, optional
-            ``None`` or ``False`` for none, ``True`` for every figure, or plot
-            ids such as ``["statistical.radar", "stylised_facts.overall"]``.
-            Rendered server-side; :meth:`get_job` writes them to disk.
-        plot_all : bool, default False
-            Draw everything the enabled areas can draw — every distribution and
-            every stylised fact, not just the summaries. An area switched off
-            still draws nothing, so this means "all of what ran".
+            ``None`` or ``False`` draws nothing, ``True`` draws every figure
+            the enabled areas can draw, and a list draws just those ids.
+            An area switched off draws nothing either way. Rendered
+            server-side; :meth:`get_job` writes them to disk. The ids are
+
+            - ``statistical.radar`` — the distance spider, one polygon per
+              population
+            - ``statistical.distribution`` — every metric's KDE;
+              ``statistical.distribution.{metric}`` for one, e.g. ``.spread``
+            - ``stylised_facts.overall`` — the verdict table
+            - ``stylised_facts.fact`` — every fact;
+              ``stylised_facts.fact.{name}`` for one, e.g. ``.heavy_tails``
+            - ``impact.response`` — impact response by event type;
+              ``impact.event.{type}`` for one
+            - ``volume_correlation.levels``, ``volume_correlation.changes``,
+              or ``volume_correlation.overall`` for both
 
         Returns
         -------
@@ -274,7 +281,6 @@ class ValidationResource:
             sample_period=sample_period,
             match_generated_sample=match_generated_sample,
             plots=plots,
-            plot_all=plot_all or None,
         )
 
         if sim_ids is not None:
