@@ -1,6 +1,32 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.17 (2026-09-22)
+
+### Features
+
+- **sdk**: Follow the API onto one data prefix and one run call
+  ([`cc91cc6`](https://github.com/simudyne/pulse-sdk/commit/cc91cc628365b017625d843812e9e51521635702))
+
+Mirrors pulse-api-pod 1.69.0, which collapsed three overlapping data endpoints into two and merged
+  foundation-model runs into the simulation routes.
+
+- client.data gains available_data() (everything in the registry, with an opt-in
+  include_calibration_state), calibrated_data() (what the ABM can simulate) and calibrate(), which
+  moved off client.simulation. Replaces get_available_symbols(); calibrated_data returns {total,
+  limit, offset, symbols} rather than a bare list, and the ticker is `symbol` with the issuer in
+  `company_name`. - client.simulation.run() takes engine="abm"|"fm" and submits both. It sends only
+  the fields belonging to the engine asked for, because the API rejects the other engine's fields
+  rather than ignoring them, and omits n_runs when unset so the per-engine default (5 and 1) lives
+  in one place. client.fm.run/job_status/job_logs/available_data are gone; FmResource keeps models()
+  and live(). - The `prompt` argument is dropped everywhere: the orchestrator builds every prompt
+  from the market identity and always discarded it. - Fixes a red test that still passed ticksize=
+  to ValidationResource.run(), removed in 4dcf91c. The assertions there are about multipart shape
+  and never checked it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.16 (2026-09-22)
 
 ### Features
