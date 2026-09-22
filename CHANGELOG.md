@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.14 (2026-09-22)
+
+### Features
+
+- **validation**: Stop asking for a tick size
+  ([`4dcf91c`](https://github.com/simudyne/pulse-sdk/commit/4dcf91cfbb1fb8667f7f742525398ab6735d1361))
+
+run() took a ticksize that never reached a computation. pulse-check reads the value off the
+  historical day — the metadata sidecar, else pulse_format's metadata for that day's
+  full_data.parquet — and the impact response has always used that one. The value passed here was
+  written over the result's metadata afterwards, so a job could report the tick size you sent beside
+  numbers computed with another.
+
+- ticksize is gone from run(), along with the "must be positive" check. - The docstring says where
+  the value now comes from: metadata["ticksize"] is what was used and metadata["ticksize_source"] is
+  where it came from, "fallback" meaning none was found and 1.0 was assumed — which puts the impact
+  response in price units rather than ticks.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.13 (2026-09-22)
 
 ### Bug Fixes
