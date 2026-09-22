@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.15 (2026-09-22)
+
+### Features
+
+- **sdk**: Full numpy-style docstrings for every endpoint
+  ([`6ebaa8a`](https://github.com/simudyne/pulse-sdk/commit/6ebaa8a4d6de3ea539f393dc079df0509348a8e5))
+
+- Document all 9 resource modules: class docstrings for the 7 that had none, Examples sections for
+  the 17 methods missing one, and Raises on every method that can raise - Lift 49 lines of examples
+  out of Returns blocks into real Examples sections, where numpydoc renders them as runnable code -
+  Rewrite example subscripts that mkdocs-autorefs misread as markdown reference links, taking the
+  pulse-sdk docs build to zero warnings
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.14 (2026-09-22)
 
 ### Features
