@@ -45,7 +45,8 @@ class PulseABM:
     api_keys : ApiKeysResource
         Create, list and revoke API keys.
     data : DataResource
-        The catalog of calibrated symbols available to simulate.
+        The market data catalogue: what exists, what is calibrated,
+        and calibrating a day.
     simulation : SimulationResource
         Submit agent-based simulations and retrieve their results.
     validation : ValidationResource

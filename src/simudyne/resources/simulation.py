@@ -1,14 +1,20 @@
 """
 Simulation Resource for the Pulse SDK.
 
-This module provides methods for running agent-based market simulations,
-tracking job status, and retrieving results.
+Every simulation goes through here, whichever engine generates it: ``run()``
+takes ``engine="abm"`` for the agent-based model or ``engine="fm"`` for a
+foundation model, and everything downstream is shared. The two mint the same
+canonical ``sim_id`` and differ only in its ``gen_method`` field, so status,
+logs and results need no knowledge of which one ran.
 
 Workflow:
     1. Submit a simulation with run() -> returns job_id and sim_ids
     2. Track progress with get_job_status(job_id)
     3. View all past jobs with get_jobs()
     4. Once complete, retrieve results with get_job_results() or get_sim_data()
+
+Calibration is not here — it is a data operation, at
+:meth:`~simudyne.resources.data.DataResource.calibrate`.
 """
 
 import io
@@ -20,7 +26,6 @@ JOBS_PATH = "/simulation/jobs"
 RESULTS_PATH = "/simulation/results"
 CACHED_PATH = "/simulation/cached"
 SAMPLE_PATH = "/simulation/sample"
-CALIBRATE_PATH = "/calibrate"
 LRM_PATH = "/simulation/lrm/run"
 
 # Available market scenarios
@@ -127,68 +132,119 @@ class SimulationResource:
 
     def run(
         self,
-        symbol: str,
-        cal_date: str,
-        provider: str,
-        exchange: str,
-        n_runs: int = 100,
+        symbol: str = "",
+        cal_date: str = "",
+        provider: str = "",
+        exchange: str = "",
+        engine: str = "abm",
+        n_runs: int = None,
         seed: int = 42,
-        scenario: str = "normal",
+        scenario: str = None,
         scenario_params: dict = None,
         exec_algos: list = None,
+        model_id: str = "",
+        duration_minutes: float = None,
+        horizon: int = None,
+        device: str = "",
+        model_args: dict = None,
     ):
         """Submit a simulation run to be executed asynchronously.
 
-        The simulation will run n_runs independent Monte Carlo samples. Each run
-        produces a unique sim_id that can be used to retrieve results once complete.
-        The user_id is automatically set from your API key.
+        One endpoint for both engines. ``engine="abm"`` runs the agent-based
+        model against a calibrated day; ``engine="fm"`` runs a foundation model
+        against a real day's opening rows. Both mint the same canonical
+        ``sim_id`` and are read back through the same results methods — the two
+        differ only in the ``gen_method`` field of the id.
 
         A symbol is identified by four fields: ``provider``, ``exchange``,
-        ``symbol`` and ``cal_date``.
+        ``symbol`` and ``cal_date``. They are validated against the data
+        catalogue *before* the job is accepted, so a run that names data which
+        does not exist (or is not calibrated, or the model was not trained for)
+        fails here in milliseconds rather than after a worker or a GPU pod has
+        started.
 
         Parameters
         ----------
-        symbol : str
-            Trading symbol (e.g., "9999.HK", "0005.HK")
-        cal_date : str
-            Calibration date in YYYY-MM-DD format (e.g., "2025-09-01")
-        provider : str
-            Data provider the symbol is sourced from (e.g., "omd", "bmll")
-        exchange : str
-            Exchange protocol name (e.g., "hkex_securities", "hkex_derivatives")
-        n_runs : int, default 100
-            Number of independent Monte Carlo runs (default: 100)
+        symbol : str, optional
+            Trading symbol, e.g. "9999.HK" or "700". Required for
+            ``engine="abm"``. For ``engine="fm"`` see the all-or-nothing rule
+            under `Raises`.
+        cal_date : str, optional
+            Trading day in YYYY-MM-DD form, e.g. "2025-09-01". For the ABM this
+            is the day the model was calibrated on; for an FM it is the day the
+            prompt is sliced from.
+        provider : str, optional
+            Data provider the symbol is sourced from: "omd" or "bmll".
+        exchange : str, optional
+            Exchange protocol name, e.g. "hkex_securities" or "lse".
+        engine : {'abm', 'fm'}, default 'abm'
+            Which engine generates the book. ``"fm"`` additionally requires
+            ``model_id``; see :meth:`~simudyne.resources.fm.FmResource.models`
+            for what is available and what each model accepts.
+        n_runs : int, optional
+            Independent Monte Carlo runs, each a seeded draw of one
+            configuration. Defaults to 5 for the ABM and 1 for an FM, whose
+            ceiling is 8 so a job's worst case always fits one GPU.
         seed : int, default 42
-            Master random seed for reproducibility (default: 42)
-        scenario : str, default 'normal'
-            Market scenario to simulate. Options:
-            - "normal": No scenario injection (default)
-            - "flash_crash": Large rapid SELL depleting bid-side liquidity
-            - "buy_panic": Large rapid BUY depleting ask-side liquidity
-            - "gradual_selloff": Slow sustained SELL over extended period
-            - "trending_up": Small steady BUY producing uptrend
-            - "trending_down": Small steady SELL producing downtrend
+            Master seed. Per-run seeds are derived from it identically by both
+            engines, so a given ``seed`` and ``n_runs`` reproduce exactly.
+        scenario : str, optional
+            ABM only, default "normal". Market scenario to inject:
+
+            - "normal": no injection
+            - "flash_crash": large rapid SELL depleting bid-side liquidity
+            - "buy_panic": large rapid BUY depleting ask-side liquidity
+            - "gradual_selloff": slow sustained SELL over an extended period
+            - "trending_up" / "trending_down": small steady BUY / SELL
+
+            Scenarios are deliberately not implemented for foundation models;
+            passing this with ``engine="fm"`` is an error, not a silent no-op.
         scenario_params : dict, optional
-            Override scenario defaults. Keys:
-            - impact_multiplier (float): Total volume as multiple of resting liquidity
-            - order_size_ratio (float): Child order size as fraction of liquidity
-            - order_freq (str): Child order spacing (e.g., "500ms", "5s", "30s")
-            - start_time (str): Time to begin orders (e.g., "10:30:00")
-        exec_algos : list, optional
-            List of execution algorithm configs. Each dict must have "type".
-            Supported types: "twap", "vwap", "css"
+            ABM only. Overrides the scenario's defaults. Keys:
+
+            - impact_multiplier (float): total volume as a multiple of resting
+              liquidity
+            - order_size_ratio (float): child order size as a fraction of
+              liquidity
+            - order_freq (str): child order spacing, e.g. "500ms", "5s"
+            - start_time (str): when to begin, e.g. "10:30:00"
+        exec_algos : list of dict, optional
+            Execution algorithms, same shape and meaning on both engines. Each
+            entry needs "type":
 
             For TWAP/VWAP:
+
             - type: "twap" or "vwap" (required)
-            - order_size: Total shares. Negative = BUY, positive = SELL (required)
-            - horizon: Execution window in SECONDS, e.g. 3600 for 1 hour (required)
-            - start_time: When to start, e.g. "09:30:00" (optional, defaults to market open)
+            - order_size: total shares; negative = BUY, positive = SELL
+              (required)
+            - horizon: execution window in SECONDS, e.g. 3600 (required)
+            - start_time: e.g. "09:30:00" (optional, defaults to market open)
 
-            For CSS (Custom Static Schedule):
+            For CSS (custom static schedule):
+
             - type: "css" (required)
-            - orders: Dict mapping timestamps to quantities (required)
+            - orders: dict mapping timestamps to quantities (required)
 
-            Multiple exec_algos can be submitted in one simulation.
+            An FM job accepts at most one algo and needs a real market day —
+            a testdata run cannot carry one.
+        model_id : str, optional
+            FM only, required when ``engine="fm"``. A model id from
+            :meth:`~simudyne.resources.fm.FmResource.models`.
+        duration_minutes : float, optional
+            FM only. Sim horizon as wall-clock minutes, measured from the first
+            row of the warm-start context. The resulting frame count is
+            reported in the run's output rather than requested up front — an
+            illiquid symbol simply produces fewer frames for the same duration.
+            A duration running past the close is clipped.
+        horizon : int, optional
+            FM only. A raw frame count; the older form of ``duration_minutes``
+            and applied only when that is unset.
+        device : {'cpu', 'gpu', ''}, default ''
+            FM only. Overrides the model's declared default compute.
+        model_args : dict, optional
+            FM only. Per-run overrides of the model's declared knobs, e.g.
+            ``{"temperature": 0.7}``. Unknown or out-of-range keys are
+            rejected.
 
         Returns
         -------
@@ -197,77 +253,74 @@ class SimulationResource:
 
             - job_id (str): unique job identifier, passed to
               :meth:`get_job_status` and :meth:`get_job_results`
-            - queued_sim_ids (list of str): the simulation IDs that will be
-              run, one per Monte Carlo run
-            - run_offset (int): starting run index
+            - sim_ids (list of str): the simulation ids that will be run, one
+              per Monte Carlo run, known at submission for both engines
             - n_runs (int): number of runs queued
+            - engine (str): the engine that accepted the job
 
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier (403); if the symbol has no calibration
-            for ``cal_date``, ``scenario`` is not a known scenario, or an
-            ``exec_algos`` entry is missing a required key (400).
+            If the key is not pro tier (403).
+
+            If the named data is unusable (422). The market identity is checked
+            against the catalogue before submission:
+
+            - ``engine="abm"`` — all four market fields are required, and the
+              day must be calibrated. The error names the dates that *are*
+              calibrated for that symbol and points at
+              :meth:`~simudyne.resources.data.DataResource.calibrate`.
+            - ``engine="fm"`` — the four fields are all-or-nothing. Set none of
+              them and the run uses the model image's baked-in test day. Set
+              all four and the day must exist in the data registry and the
+              model must accept that market; the error names the model's
+              supported markets and the dates that do exist. Set *some* of
+              them and the request is refused, naming exactly which are
+              missing — a partial identity is always a mistake, never a
+              request for test data.
+
+            If a field does not belong to the chosen engine (422), e.g.
+            ``scenario`` with ``engine="fm"`` or ``model_id`` with
+            ``engine="abm"``.
 
         See Also
         --------
-        get_job_status : Poll a submitted job.
+        get_job_status : Poll a submitted job, either engine.
         get_job_results : Read results once the job completes.
-        list_scenarios : The scenarios this deployment accepts.
-        get_scenario_defaults : The default ``scenario_params`` per scenario.
+        simudyne.resources.data.DataResource.available_data : Days an FM can be
+            prompted with.
+        simudyne.resources.data.DataResource.calibrated_data : Days the ABM can
+            simulate.
+        simudyne.resources.fm.FmResource.models : Models and what each accepts.
 
         Examples
         --------
-        A basic run:
+        An agent-based run:
 
-        >>> result = client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
-        ...     n_runs=10,
-        ... )
-        >>> print(result["job_id"])
-
-        A flash-crash scenario with overridden defaults:
-
-        >>> result = client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
-        ...     n_runs=50,
-        ...     scenario="flash_crash",
-        ...     scenario_params={
-        ...         "start_time": "11:00:00",
-        ...         "impact_multiplier": 15.0,
-        ...     },
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-01",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     n_runs=10, scenario="flash_crash",
         ... )
 
-        A TWAP that sells 50k shares over an hour — ``order_size`` is positive
-        to sell:
+        The same market through a foundation model — only ``engine`` and
+        ``model_id`` change:
 
-        >>> result = client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
-        ...     n_runs=20,
-        ...     exec_algos=[{
-        ...         "type": "twap",
-        ...         "order_size": 50000,   # positive = sell
-        ...         "horizon": 3600,       # seconds (1 hour)
-        ...         "start_time": "09:30:00",
-        ...     }],
+        >>> job = client.simulation.run(
+        ...     symbol="700", cal_date="2025-09-01",
+        ...     provider="bmll", exchange="hkex_securities",
+        ...     engine="fm", model_id="pulse-lob-1", duration_minutes=30,
         ... )
 
-        The same size on the buy side — ``order_size`` negative:
+        A smoke test against the model's baked-in day — no market named at all:
 
-        >>> result = client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
+        >>> job = client.simulation.run(engine="fm", model_id="pulse-lob-1")
+
+        An execution algorithm, on either engine:
+
+        >>> job = client.simulation.run(
+        ...     symbol="9999.HK", cal_date="2025-09-01",
+        ...     provider="omd", exchange="hkex_securities",
         ...     n_runs=20,
         ...     exec_algos=[{
         ...         "type": "twap",
@@ -276,34 +329,50 @@ class SimulationResource:
         ...     }],
         ... )
 
-        A custom static schedule, and more than one algo in the same run:
+        Both engines are polled and read identically:
 
-        >>> result = client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
-        ...     n_runs=20,
-        ...     exec_algos=[
-        ...         {"type": "vwap", "order_size": 25000, "horizon": 1800},
-        ...         {"type": "css", "orders": {"10:00:00": 5000, "14:00:00": -5000}},
-        ...     ],
-        ... )
+        >>> import time
+        >>> while not client.simulation.get_job_status(job["job_id"])["is_complete"]:
+        ...     time.sleep(20)
+        >>> book = client.simulation.get_sim_data(job["sim_ids"][0])
         """
-        payload = {
-            "symbol": symbol,
-            "cal_date": cal_date,
-            "provider": provider,
-            "exchange": exchange,
-            "n_runs": n_runs,
-            "seed": seed,
-            "scenario": scenario,
-        }
+        payload = {"engine": engine, "seed": seed}
 
-        if scenario_params:
-            payload["scenario_params"] = scenario_params
+        # The market identity is all-or-nothing on an FM run: sending a blank
+        # field is not the same as omitting it, since some-but-not-all is an
+        # error and none of them is the model's baked-in test day.
+        for name, value in (
+            ("symbol", symbol), ("cal_date", cal_date),
+            ("provider", provider), ("exchange", exchange),
+        ):
+            if value:
+                payload[name] = value
+
+        if n_runs is not None:
+            payload["n_runs"] = n_runs
         if exec_algos:
             payload["exec_algos"] = self._serialize_exec_algos(exec_algos)
+
+        # Engine-specific fields are sent only when they belong to the engine
+        # asked for, and only when the caller actually set them: the API
+        # rejects a field belonging to the other engine rather than ignoring
+        # it, so passing a default through would fail every run of one kind.
+        if engine == "abm":
+            if scenario is not None:
+                payload["scenario"] = scenario
+            if scenario_params:
+                payload["scenario_params"] = scenario_params
+        else:
+            if model_id:
+                payload["model_id"] = model_id
+            if duration_minutes is not None:
+                payload["duration_minutes"] = duration_minutes
+            if horizon is not None:
+                payload["horizon"] = horizon
+            if device:
+                payload["device"] = device
+            if model_args:
+                payload["model_args"] = model_args
 
         return self._pro_request("POST", RUN_PATH, json=payload)
 
@@ -319,94 +388,6 @@ class SimulationResource:
                     algo["orders"] = {str(k): int(v) for k, v in orders.items()}
             result.append(algo)
         return result
-
-    def calibrate(
-        self,
-        symbol: str,
-        cal_date: str,
-        provider: str,
-        exchange: str,
-        simulations: int = None,
-        batch_size: int = None,
-        optimize_adj_params: bool = True,
-    ):
-        """Trigger model calibration for a symbol and date.
-
-        Calibration runs asynchronously to fit model parameters to observed
-        market data for the given symbol and date.
-
-        A symbol is identified by four fields: ``provider``, ``exchange``,
-        ``symbol`` and ``cal_date``.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading symbol (e.g., "9999.HK")
-        cal_date : str
-            Calibration date in YYYY-MM-DD format
-        provider : str
-            Data provider the symbol is sourced from (e.g., "omd", "bmll")
-        exchange : str
-            Exchange protocol name (e.g., "hkex_securities", "hkex_derivatives")
-        simulations : int, optional
-            Number of simulations to run during calibration
-        batch_size : int, optional
-            Batch size for calibration runs
-        optimize_adj_params : bool, default True
-            Whether to optimise adjustment parameters (default: True)
-
-        Returns
-        -------
-        dict
-            Calibration job submission result, containing the job identifier
-            and its accepted status.
-
-        Raises
-        ------
-        PulseAPIError
-            If the key is not pro tier (403), or there is no raw market data
-            for the symbol on ``cal_date`` (400).
-
-        Notes
-        -----
-        Calibration is only needed for a symbol/date that is not already in
-        the catalog. Check :meth:`~simudyne.resources.data.DataResource.get_available_symbols`
-        first — most instruments are calibrated already, and recalibrating is
-        far slower than running against an existing calibration.
-
-        Examples
-        --------
-        >>> job = client.simulation.calibrate(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
-        ... )
-
-        With an explicit budget, and adjustment-parameter optimisation off:
-
-        >>> job = client.simulation.calibrate(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
-        ...     provider="omd",
-        ...     exchange="hkex_securities",
-        ...     simulations=500,
-        ...     batch_size=50,
-        ...     optimize_adj_params=False,
-        ... )
-        """
-        payload: dict = {
-            "symbol": symbol,
-            "cal_date": cal_date,
-            "provider": provider,
-            "exchange": exchange,
-            "optimize_adj_params": optimize_adj_params,
-        }
-        if simulations is not None:
-            payload["simulations"] = simulations
-        if batch_size is not None:
-            payload["batch_size"] = batch_size
-        return self._pro_request("POST", CALIBRATE_PATH, json=payload)
 
     def get_jobs(self, limit: int = 100):
         """Get simulation jobs submitted by the authenticated user, newest first.
