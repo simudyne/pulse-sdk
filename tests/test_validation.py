@@ -202,7 +202,7 @@ class TestOneEntryPoint:
         res.get_job("v1")
         res.list_jobs(limit=5)
         assert client.calls[0][:2] == ("GET", "/validation/jobs/v1")
-        assert client.calls[1][2]["params"] == {"limit": 5}
+        assert client.calls[1][2]["params"] == {"limit": 5, "offset": 0}
 
 
 class TestSimulatedFrameShapes:
@@ -406,3 +406,24 @@ class TestBothSourcesAtOnce:
                 sim_ids=["s"] * 13,
                 **IDENTITY,
             )
+
+
+class TestPagingAndStatus:
+    """Matching pulse-api-pod 1.69.0: a paged list and a lightweight poll."""
+
+    def test_list_jobs_pages(self):
+        client = FakeClient([{"total": 60, "limit": 10, "offset": 10, "jobs": []}])
+        ValidationResource(client).list_jobs(limit=10, offset=10)
+        assert client.calls[0][2]["params"] == {"limit": 10, "offset": 10}
+
+    def test_list_jobs_starts_at_the_beginning(self):
+        client = FakeClient([{"total": 0, "limit": 50, "offset": 0, "jobs": []}])
+        ValidationResource(client).list_jobs()
+        assert client.calls[0][2]["params"] == {"limit": 50, "offset": 0}
+
+    def test_status_asks_the_cheap_endpoint(self):
+        """Not get_job: the full result is large and tier-filtered."""
+        client = FakeClient([{"job_id": "v1", "status": "running", "is_complete": False}])
+        out = ValidationResource(client).get_job_status("v1")
+        assert client.calls[0][1] == "/validation/jobs/v1/status"
+        assert out["is_complete"] is False

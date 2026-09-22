@@ -561,19 +561,57 @@ class ValidationResource:
             job["plot_paths"] = _save_plots(job, plot_dir)
         return job
 
-    def list_jobs(self, limit: int = 50) -> dict:
+    def get_job_status(self, job_id: str) -> dict:
+        """Where a validation job has got to, without its result.
+
+        The full result is large and tier-filtered, so a poll loop should ask
+        this instead of :meth:`get_job` and fetch the result once, when
+        ``is_complete`` turns true.
+
+        Parameters
+        ----------
+        job_id : str
+            A validation job handle from :meth:`run`.
+
+        Returns
+        -------
+        dict
+            ``{job_id, status, message, is_complete, created_at, updated_at}``.
+            ``status`` is one of pending / running / completed / failed, and
+            only the last two are terminal — which is what ``is_complete``
+            says, so a caller need not keep that list itself.
+
+        Raises
+        ------
+        PulseAPIError
+            If the job does not exist or belongs to another key — status 404.
+
+        Examples
+        --------
+        >>> import time
+        >>> while not client.validation.get_job_status(job_id)["is_complete"]:
+        ...     time.sleep(30)
+        >>> result = client.validation.get_job(job_id, plot_dir="figures/")
+        """
+        return self._client._request("GET", f"{JOBS_PATH}/{job_id}/status")
+
+    def list_jobs(self, limit: int = 50, offset: int = 0) -> dict:
         """List your validation jobs, newest first.
 
         Parameters
         ----------
         limit : int, default 50
-            Maximum number of jobs to return.
+            Maximum number of jobs to return. Capped at 200 by the API.
+        offset : int, default 0
+            Jobs to skip before this page, for paging through more than
+            ``limit`` of them.
 
         Returns
         -------
         dict
-            Contains ``jobs``, a list of job summaries newest first, and
-            ``total``, the count before ``limit`` was applied.
+            ``{total, limit, offset, jobs}``. ``jobs`` is the page, newest
+            first; ``total`` is your full job count rather than the page size,
+            so a caller can tell whether more pages exist.
 
         Raises
         ------
@@ -591,5 +629,14 @@ class ValidationResource:
         >>> done = [j for j in listing["jobs"] if j["status"] == "completed"]
         >>> newest = done[0]
         >>> result = client.validation.get_job(newest["job_id"])
+
+        Page through the rest:
+
+        >>> seen = len(listing["jobs"])
+        >>> while seen < listing["total"]:
+        ...     page = client.validation.list_jobs(limit=10, offset=seen)
+        ...     seen += len(page["jobs"])
         """
-        return self._client._request("GET", JOBS_PATH, params={"limit": limit})
+        return self._client._request(
+            "GET", JOBS_PATH, params={"limit": limit, "offset": offset}
+        )
