@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.18 (2026-09-22)
+
+### Features
+
+- **validation**: Page the job list, and poll without the result
+  ([`83eb849`](https://github.com/simudyne/pulse-sdk/commit/83eb849e9b58f562a4da632077fd42842fe89311))
+
+pulse-api-pod 1.69.0 put GET /validation/jobs on the {total, limit, offset, jobs} envelope and added
+  GET /validation/jobs/{job_id}/status. The SDK reached neither: list_jobs sent no offset, so there
+  was no way past the first page, and a poll loop had to call get_job and pull the whole
+  tier-filtered result to read one string.
+
+- list_jobs(limit, offset), with the envelope documented and an example that pages to the end using
+  total. - get_job_status(job_id) — {job_id, status, message, is_complete, created_at, updated_at},
+  named to match simulation.get_job_status(). is_complete saves a caller keeping its own list of
+  terminal states.
+
+Nothing broke before this: list_jobs passed the API's dict straight through and never read the field
+  that went.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.17 (2026-09-22)
 
 ### Features
