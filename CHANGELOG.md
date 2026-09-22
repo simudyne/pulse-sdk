@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.10 (2026-09-22)
+
+### Bug Fixes
+
+- **tests**: Take the in-progress test files back off dev
+  ([`593e329`](https://github.com/simudyne/pulse-sdk/commit/593e3291be1f3518bc0fc4ee6869f9fb3b4d88d7))
+
+They were staged in my working tree and my commit took the whole index rather than the paths I
+  named, so four unfinished files went up with the validation change. test_run_lrm.py imports
+  LRM_RUN_PATH, which simulation.py does not define, so `pytest tests/` aborted at collection on
+  dev.
+
+Removed from the branch and left in the working tree untouched, so they land when their author is
+  ready.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.9 (2026-09-22)
 
 ### Features
