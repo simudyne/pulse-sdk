@@ -12,6 +12,71 @@ from simudyne.exceptions import PulseAPIError
 
 
 class PulseABM:
+    """Client for the Simudyne Pulse synthetic market data API.
+
+    The client holds the API key and HTTP session, and exposes every endpoint
+    through a resource attribute (``client.simulation``, ``client.data``, ...).
+    Construct it once and reuse it; the underlying :class:`requests.Session`
+    keeps connections alive across calls.
+
+    Transient failures (HTTP 429, 502, 503, 504) and network timeouts are
+    retried automatically with exponential backoff. Any other non-2xx response
+    raises :class:`~simudyne.exceptions.PulseAPIError`.
+
+    Parameters
+    ----------
+    api_key : str, optional
+        Pulse API key (``pk_live_...``). Falls back to the ``SIMUDYNE_API_KEY``
+        environment variable when omitted.
+    base_url : str, optional
+        API root, with no trailing slash. Falls back to the
+        ``SIMUDYNE_BASE_URL`` environment variable, then to
+        ``https://pulse-api.simudyne.com``.
+    timeout : int, optional
+        Per-request timeout in seconds. Defaults to 30.
+    max_retries : int, default 3
+        Retry attempts for transient errors. Backoff is ``2 ** attempt``
+        seconds, so the default waits 1s, 2s then 4s before giving up.
+
+    Attributes
+    ----------
+    profile : ProfileResource
+        Account details, usage and download history.
+    api_keys : ApiKeysResource
+        Create, list and revoke API keys.
+    data : DataResource
+        The catalog of calibrated symbols available to simulate.
+    simulation : SimulationResource
+        Submit agent-based simulations and retrieve their results.
+    simulator_gym : SimulatorGymResource
+        Gym-style reinforcement-learning environment over a WebSocket.
+    validation : ValidationResource
+        Score synthetic data against real data.
+
+    Raises
+    ------
+    ValueError
+        If no API key is given and ``SIMUDYNE_API_KEY`` is unset.
+
+    Examples
+    --------
+    Key taken from the environment:
+
+    >>> import os
+    >>> os.environ["SIMUDYNE_API_KEY"] = "pk_live_..."
+    >>> client = PulseABM()
+
+    Key passed explicitly, against a non-default deployment:
+
+    >>> client = PulseABM(
+    ...     api_key="pk_live_...",
+    ...     base_url="https://pulse-api-dev.simudyne.com",
+    ...     timeout=60,
+    ... )
+    >>> print(client.profile.get()["email"])
+    'you@example.com'
+    """
+
     DEFAULT_BASE_URL = "https://pulse-api.simudyne.com"
     DEFAULT_TIMEOUT = 30
     RETRYABLE_STATUS_CODES = {429, 502, 503, 504}

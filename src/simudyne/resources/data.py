@@ -2,6 +2,20 @@ AVAILABLE_SYMBOLS_PATH = "/data/available-symbols"
 
 
 class DataResource:
+    """Browse the catalog of calibrated instruments you can simulate.
+
+    Reached as ``client.data``. Every simulation is pinned to a symbol that has
+    already been calibrated, so this is the resource that tells you which
+    ``provider`` / ``exchange`` / ``symbol`` / ``cal_date`` combinations exist.
+
+    Examples
+    --------
+    >>> catalog = client.data.get_available_symbols(exchange="hkex_securities")
+    >>> for instrument in catalog[:3]:
+    ...     dates = instrument["available_dates"]
+    ...     print(instrument["symbol"], dates[:2])
+    """
+
     def __init__(self, client):
         self._client = client
 
@@ -38,7 +52,46 @@ class DataResource:
 
         Returns
         -------
-        list of instrument dicts, each with available_dates.
+        list of dict
+            One entry per instrument, each with:
+
+            - symbol (str): ticker, e.g. "700.HK"
+            - exchange (str): exchange protocol, e.g. "hkex_securities"
+            - provider (str): data provider, e.g. "omd"
+            - available_dates (list of str): calibration dates, "YYYY-MM-DD",
+              any of which is a valid ``cal_date`` for
+              :meth:`~simudyne.resources.simulation.SimulationResource.run`
+
+        Raises
+        ------
+        PulseAPIError
+            If the key is invalid, inactive or expired — status 401. The
+            filters themselves are not validated: a malformed ``date`` or an
+            unknown ``symbol`` returns no matches rather than an error.
+
+        Examples
+        --------
+        The whole catalog:
+
+        >>> everything = client.data.get_available_symbols()
+        >>> len(everything)
+        412
+
+        One instrument, to see which dates it can be run for:
+
+        >>> hits = client.data.get_available_symbols(symbol="700.HK")
+        >>> first = hits[0]
+        >>> print(first["available_dates"])
+        ['2025-09-01', '2025-09-02', '2025-09-03']
+
+        Everything calibrated on one date, which is the usual way to pick a
+        date that is valid across several instruments:
+
+        >>> on_date = client.data.get_available_symbols(date="2025-09-01")
+
+        Paged:
+
+        >>> page = client.data.get_available_symbols(limit=10, offset=20)
         """
         params = {
             k: v for k, v in {
