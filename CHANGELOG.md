@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.12 (2026-09-22)
+
+### Bug Fixes
+
+- **docs**: List the impact.event family id
+  ([`60719d2`](https://github.com/simudyne/pulse-sdk/commit/60719d2f229456fb3a6f81a6fe5342ccb316a833))
+
+The plot id list gave impact.event.{type} but not the bare family form, which is the one selector
+  that draws every event type at once. Docs only — impact.event has always resolved.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.11 (2026-09-22)
 
 ### Features
