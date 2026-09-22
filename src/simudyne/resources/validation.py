@@ -9,7 +9,7 @@ Submit, then poll::
 
     job = client.validation.run(
         symbol="BARC", date="2026-06-17", provider="bmll", exchange="lse",
-        sim_ids=[...], ticksize=0.05,
+        sim_ids=[...],
     )
     result = client.validation.get_job(job["job_id"])
     result["distances"]["spread"]["l1"]        # per simulation
@@ -26,6 +26,14 @@ One flag per metric — ``statistical``, ``stylised_facts``, ``impact``,
 default for your tier, resolved server-side, so naming none behaves exactly as
 your account is entitled to. Pass ``False`` to skip an expensive pass or
 ``True`` to force one on.
+
+Tick size
+---------
+Read off the historical day — the metadata sidecar, else pulse_format's own
+metadata for that day's ``full_data.parquet``. It is not a parameter. The
+result reports ``metadata["ticksize"]`` and ``metadata["ticksize_source"]``;
+a source of ``"fallback"`` means none was found and 1.0 was assumed, which
+puts the impact response in price units rather than ticks.
 
 The historical gate
 -------------------
@@ -186,7 +194,6 @@ class ValidationResource:
         *,
         sim_ids=None,
         sim_files=None,
-        ticksize: float = 1.0,
         statistical=None,
         stylised_facts=None,
         impact=None,
@@ -217,7 +224,10 @@ class ValidationResource:
             exists under both with different dates and tick sizes, so
             ``(symbol, provider, exchange)`` is the identity, not the symbol.
         exchange : str
-            Exchange, e.g. ``"lse"`` or ``"hkex_securities"``.
+            Exchange, e.g. ``"lse"`` or ``"hkex_securities"``. The tick size
+            is read off the historical day for this instrument rather than
+            passed in; ``metadata["ticksize"]`` reports the value used and
+            ``metadata["ticksize_source"]`` where it came from.
         sim_ids : list of str or dict, optional
             Platform simulation IDs, 1 to 25. A flat list is one unnamed
             population. A mapping — ``{"fm": [...], "abm": [...]}`` — compares
@@ -229,8 +239,6 @@ class ValidationResource:
             Your own simulated runs, up to 25: paths, ``(filename, bytes)``
             pairs, or polars / pandas DataFrames in pulse format. Grouped the
             same way as ``sim_ids``. The historical side is fetched for you.
-        ticksize : float, default 1.0
-            Minimum price increment. Should match the instrument.
         statistical, stylised_facts, impact, volume_correlation, fid, mind : bool, optional
             Whether to run each area. ``None`` uses your tier's default.
         lob : bool, optional
@@ -276,8 +284,8 @@ class ValidationResource:
         ------
         ValueError
             If neither or both of ``sim_ids`` and ``sim_files`` are given,
-            either is empty, more than 25 runs are passed, ``ticksize`` is not
-            positive, or ``n_levels`` is below 1. Also raised if the API
+            either is empty, more than 25 runs are passed, or ``n_levels``
+            is below 1. Also raised if the API
             accepts the request but returns no ``job_id``.
         PulseAPIError
             If the instrument has no historical data for ``date``, a
@@ -358,8 +366,6 @@ class ValidationResource:
         )
         if count > MAX_SIM_FILES:
             raise ValueError(f"Maximum {MAX_SIM_FILES} simulations per validation job")
-        if ticksize <= 0:
-            raise ValueError("ticksize must be positive")
         if n_levels < 1:
             raise ValueError("n_levels must be at least 1")
 
@@ -391,7 +397,6 @@ class ValidationResource:
                         if isinstance(sim_ids, dict)
                         else list(sim_ids)
                     ),
-                    "ticksize": ticksize,
                     "config": config,
                 },
             )
@@ -425,7 +430,6 @@ class ValidationResource:
                     "date": date,
                     "provider": provider,
                     "exchange": exchange,
-                    "ticksize": str(ticksize),
                     "config": json.dumps(config),
                 },
             )

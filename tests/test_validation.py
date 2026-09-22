@@ -83,7 +83,6 @@ class TestWhatToValidate:
             ({"sim_ids": SIM_IDS, "sim_files": [("a", b"x")]}, "exactly one"),
             ({"sim_ids": []}, "must not be empty"),
             ({"sim_ids": SIM_IDS * (MAX_SIM_FILES + 1)}, "Maximum 25"),
-            ({"sim_ids": SIM_IDS, "ticksize": 0}, "ticksize must be positive"),
             ({"sim_ids": SIM_IDS, "n_levels": 0}, "at least 1"),
         ],
     )
@@ -330,3 +329,27 @@ class TestGroupShape:
     def test_the_count_still_catches_too_many(self):
         with pytest.raises(ValueError, match="Maximum 25"):
             self._submit(sim_ids={"a": ["x"] * 13, "b": ["y"] * 13})
+
+
+class TestTickSizeIsNotAsked:
+    """It is read off the historical day, so passing one is a mistake.
+
+    The value a caller passed never reached a computation — the impact
+    response has always used the one pulse-check looks up — so accepting it
+    only let a result disagree with itself.
+    """
+
+    def test_run_does_not_take_it(self):
+        with pytest.raises(TypeError, match="ticksize"):
+            ValidationResource(FakeClient([{"job_id": "v1"}])).run(
+                sim_ids=SIM_IDS, ticksize=0.1, **IDENTITY
+            )
+
+    def test_it_is_not_sent(self):
+        client, _ = _run([{"job_id": "v1"}])
+        assert "ticksize" not in client.calls[0][2]["json"]
+
+    def test_an_upload_does_not_send_it_either(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(sim_files=[("a.parquet", b"x")], **IDENTITY)
+        assert "ticksize" not in client.calls[0][2]["data"]
