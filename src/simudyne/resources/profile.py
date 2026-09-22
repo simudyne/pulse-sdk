@@ -1,4 +1,17 @@
 class ProfileResource:
+    """Your account record, request usage and download allowance.
+
+    Reached as ``client.profile``. All three calls are read-only, cheap, and
+    available on every tier — :meth:`get` is the usual first call when
+    diagnosing an unexpected 403, since ``tier`` is what gates the API.
+
+    Examples
+    --------
+    >>> me = client.profile.get()
+    >>> print(me["email"], me["tier"])
+    >>> print(client.profile.downloads()["remaining"], "downloads left")
+    """
+
     def __init__(self, client):
         self._client = client
 
@@ -30,10 +43,20 @@ class ProfileResource:
                 New simulation groups per rolling 24 hours. Only enforced on
                 the free tier.
 
+        Raises
+        ------
+        PulseAPIError
+            If the key is invalid, revoked or expired — status 401.
+
         Examples
         --------
         >>> me = client.profile.get()
         >>> print(f"{me['email']} — tier {me['tier']}")
+
+        Check tier before attempting a gated call:
+
+        >>> if client.profile.get()["tier"] == "free":
+        ...     print("Simulation requires pro")
         """
         return self._client._request("GET", "/profile")
 
@@ -58,10 +81,22 @@ class ProfileResource:
                 appears once per job id rather than as a template — aggregate
                 by prefix if you want per-endpoint totals.
 
+        Raises
+        ------
+        PulseAPIError
+            If the key is invalid, revoked or expired — status 401.
+
         Examples
         --------
         >>> usage = client.profile.usage()
         >>> print(f"{usage['month']}: {usage['total_requests']} requests")
+
+        Aggregate the per-path counts back into per-endpoint totals:
+
+        >>> from collections import Counter
+        >>> totals = Counter()
+        >>> for path, count in usage["by_endpoint"].items():
+        ...     totals[path.split("/")[1]] += count
         """
         return self._client._request("GET", "/profile/usage")
 
@@ -95,9 +130,19 @@ class ProfileResource:
         A request that would exceed the allowance returns HTTP 429 without
         charging anything, so a partial download never silently eats quota.
 
+        Raises
+        ------
+        PulseAPIError
+            If the key is invalid, revoked or expired — status 401.
+
         Examples
         --------
         >>> quota = client.profile.downloads()
         >>> print(f"{quota['used']}/{quota['limit']} used, {quota['remaining']} left")
+
+        ``limit`` is None on pro and demo, so guard before comparing:
+
+        >>> if quota["remaining"] is not None and quota["remaining"] == 0:
+        ...     print("Allowance exhausted; previously fetched groups are still free")
         """
         return self._client._request("GET", "/profile/downloads")

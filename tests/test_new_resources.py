@@ -80,7 +80,7 @@ class TestRunUpload:
 
 class TestFmResource:
     def test_terminal_statuses_are_the_two_documented(self):
-        assert TERMINAL_STATUSES == {"complete", "failed"}
+        assert TERMINAL_STATUSES == ("complete", "failed")
 
     def test_models_and_status_paths(self):
         client = FakeClient([{}, {}])

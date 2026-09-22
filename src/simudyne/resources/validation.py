@@ -284,9 +284,11 @@ class ValidationResource:
         ------
         ValueError
             If neither or both of ``sim_ids`` and ``sim_files`` are given,
-            either is empty, more than 25 runs are passed, or ``n_levels``
-            is below 1. Also raised if the API
-            accepts the request but returns no ``job_id``.
+            either is empty, more than 25 runs are passed, or ``n_levels`` is
+            below 1. Also raised when a named population maps to a single
+            string or a non-iterable instead of a list of runs, when an
+            unknown option name is passed, and when the API accepts the
+            request but returns no ``job_id``.
         PulseAPIError
             If the instrument has no historical data for ``date``, a
             ``sim_id`` is unknown, or the tier does not allow a requested

@@ -1,4 +1,18 @@
 class ApiKeysResource:
+    """Create, list and revoke the API keys on your account.
+
+    Reached as ``client.api_keys``. Keys are the only credential the SDK
+    accepts, and key material is returned exactly once, by :meth:`create`.
+
+    Examples
+    --------
+    Mint a key for a job, use it, then revoke it:
+
+    >>> key = client.api_keys.create(name="Nightly backtest")
+    >>> run_client = PulseABM(api_key=key["api_key"])
+    >>> client.api_keys.revoke(key_id=key["api_key_id"])
+    """
+
     def __init__(self, client):
         self._client = client
 
@@ -24,6 +38,11 @@ class ApiKeysResource:
                 The handle to pass to :meth:`revoke`.
             warning : str
                 A reminder that the key will not be shown again.
+
+        Raises
+        ------
+        PulseAPIError
+            If the account has reached its key limit, or ``name`` is rejected.
 
         Examples
         --------
@@ -52,6 +71,11 @@ class ApiKeysResource:
             - last_used_at (str or None): None until the key is first used
             - expires_at (str or None): None for keys that do not expire
 
+        Raises
+        ------
+        PulseAPIError
+            If the calling key is invalid or has been revoked.
+
         Examples
         --------
         >>> for key in client.api_keys.list():
@@ -75,9 +99,20 @@ class ApiKeysResource:
         dict
             The revocation result.
 
+        Raises
+        ------
+        PulseAPIError
+            If ``key_id`` does not exist or does not belong to your account.
+
         Examples
         --------
         >>> new_key = client.api_keys.create(name="Training script")
         >>> client.api_keys.revoke(key_id=new_key["api_key_id"])
+
+        Revoking the key you are currently authenticating with locks you out
+        of the API, so mint the replacement first:
+
+        >>> replacement = client.api_keys.create(name="Rotated")
+        >>> client.api_keys.revoke(key_id=old_key_id)
         """
         return self._client._request("DELETE", f"/api-keys/{key_id}")
