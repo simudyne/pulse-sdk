@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.16 (2026-09-22)
+
+### Features
+
+- **validation**: Validate your own runs beside platform runs
+  ([`4ba3ddf`](https://github.com/simudyne/pulse-sdk/commit/4ba3ddf89d1f9a257759436da5676f52d1a7d17c))
+
+sim_ids and sim_files were mutually exclusive, so comparing your own model against platform
+  simulations meant two jobs and two sets of figures — never the one comparison you wanted.
+
+- Both may now be given, 25 runs in total across the two. Anything with files goes multipart, since
+  bytes cannot travel in a JSON body, and the upload endpoint takes sim_ids alongside them. - With
+  both present each source is a population of its own: a bare list becomes "uploaded" or "platform"
+  rather than merging into whatever else is there. Two mappings keep their own names. - Only the
+  uploads' grouping is sent. The server stages the files, then offsets the platform runs past them,
+  so the offset has one implementation rather than two that can disagree.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.15 (2026-09-22)
 
 ### Features
