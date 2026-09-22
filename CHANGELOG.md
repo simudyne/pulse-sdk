@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.9 (2026-09-22)
+
+### Features
+
+- **validation**: Named populations and plot_all
+  ([`46d5979`](https://github.com/simudyne/pulse-sdk/commit/46d5979b3daf4d05464303bd2ab790df2624ac1a))
+
+- sim_ids and sim_files accept either a flat list — one unnamed population, unchanged — or a mapping
+  of name to runs. Distances, distributions, verdicts and FID/MIND scores then come back keyed by
+  name, and the summary figures draw one series per population instead of averaging them together -
+  Grouped uploads travel flat with the grouping in the config, since multipart has no nesting - The
+  25-run cap counts the total across groups - plot_all draws everything the enabled areas can draw,
+  not just the summaries
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.8 (2026-09-21)
 
 ### Bug Fixes
