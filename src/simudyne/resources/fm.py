@@ -82,6 +82,12 @@ class FmResource:
         PulseAPIError
             If the key is not pro tier — status 403.
 
+        See Also
+        --------
+        simudyne.resources.data.DataResource.available_data : Days a model will accept, via model_id.
+        simudyne.resources.simulation.SimulationResource.run : Run a model with engine="fm".
+        live : Stream a model live instead of in batch.
+
         Examples
         --------
         >>> for m in client.fm.models()["models"]:
@@ -131,6 +137,11 @@ class FmResource:
         PulseAPIError
             If ``model_id`` is unknown (404), ``model_args`` holds an unknown
             or out-of-range key (400), or the key is not pro tier (403).
+
+        See Also
+        --------
+        models : Models and what each accepts.
+        simudyne.resources.fix.FixResource.usage : What a FIX session has run.
 
         Examples
         --------

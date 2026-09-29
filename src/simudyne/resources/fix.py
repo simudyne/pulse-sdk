@@ -58,6 +58,10 @@ class FixResource:
             If ``user_id`` is given without an admin key, or names an account
             that does not exist.
 
+        See Also
+        --------
+        simudyne.resources.fm.FmResource.live : Start a live FIX-compatible stream.
+
         Examples
         --------
         >>> usage = client.fix.usage()

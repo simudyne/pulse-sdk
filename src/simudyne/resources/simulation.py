@@ -415,6 +415,11 @@ class SimulationResource:
         PulseAPIError
             If the key is not pro tier (403), or ``limit`` is above 500 (400).
 
+        See Also
+        --------
+        get_job_status : Poll one job.
+        get_job_results : Read one job's results.
+
         Examples
         --------
         >>> result = client.simulation.get_jobs()
@@ -463,6 +468,12 @@ class SimulationResource:
         PulseAPIError
             If ``job_id`` is unknown or belongs to another account (404), or
             the key is not pro tier (403).
+
+        See Also
+        --------
+        run : Submit a job.
+        get_job_results : Read results once the job completes.
+        get_job_logs : The run log, for a job that failed.
 
         Notes
         -----
@@ -663,6 +674,10 @@ class SimulationResource:
             404 when the job does not exist, is not yours, or
             wrote no log.
 
+        See Also
+        --------
+        get_job_status : Where the job has got to.
+
         Examples
         --------
         >>> status = client.simulation.get_job_status(job_id)
@@ -730,6 +745,12 @@ class SimulationResource:
             If the key is not pro tier (403); if ``order_sizes`` is empty,
             ``strategy`` is not "vwap" or "twap", or the symbol has no
             calibration for ``cal_date`` (400).
+
+        See Also
+        --------
+        run : A single run, with any execution algos.
+        get_job_status : Poll the submitted job.
+        get_job_results : Read per-size results once complete.
 
         Notes
         -----
@@ -814,6 +835,12 @@ class SimulationResource:
             If ``sim_id`` is unknown or belongs to another account — status
             404.
 
+        See Also
+        --------
+        get_sim_data : Download one of the listed files.
+        get_sim_params : The parameters the run used.
+        get_sim_metrics : The run's summary metrics.
+
         Examples
         --------
         >>> files = client.simulation.list_sim_files(sim_id)
@@ -853,6 +880,11 @@ class SimulationResource:
             If ``sim_id`` is unknown or belongs to another account — status
             404.
 
+        See Also
+        --------
+        get_sim_metrics : The run's summary metrics.
+        list_sim_files : Every file the run produced.
+
         Examples
         --------
         >>> params = client.simulation.get_sim_params(sim_id)
@@ -886,6 +918,11 @@ class SimulationResource:
         PulseAPIError
             If ``sim_id`` is unknown, belongs to another account, or the
             simulation has not finished and so wrote no metrics — status 404.
+
+        See Also
+        --------
+        get_sim_params : The parameters the run used.
+        list_sim_files : Every file the run produced.
 
         Examples
         --------
@@ -1014,6 +1051,11 @@ class SimulationResource:
         PulseAPIError
             If the key is invalid, revoked or expired — status 401.
 
+        See Also
+        --------
+        get_sim_data : Download a cached run's files.
+        get_sample_data : A small sample without spending download quota.
+
         Notes
         -----
         Available on every tier, and the way onto the platform without running
@@ -1081,6 +1123,11 @@ class SimulationResource:
         PulseAPIError
             If no sample dataset has been published for this deployment — status
             404.
+
+        See Also
+        --------
+        list_cached : The cached library the sample comes from.
+        get_sim_data : The full files for one run.
 
         Notes
         -----

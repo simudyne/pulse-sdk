@@ -69,6 +69,11 @@ class GymSession:
             ``RuntimeError`` rather than ``PulseAPIError`` — it speaks
             WebSocket, not HTTP.
 
+        See Also
+        --------
+        GymSession.step : Advance the episode.
+        GymSession.close : End the session.
+
         Examples
         --------
         >>> obs = env.reset(seed=42)
@@ -111,6 +116,11 @@ class GymSession:
             error. Note this resource raises ``RuntimeError`` rather than
             ``PulseAPIError`` — it speaks WebSocket, not HTTP.
 
+        See Also
+        --------
+        GymSession.reset : Start a new episode.
+        GymSession.close : End the session.
+
         Examples
         --------
         >>> result = env.step(0)
@@ -140,6 +150,10 @@ class GymSession:
         Calling it twice is harmless.
 
         Called automatically when the session is used as a context manager.
+
+        See Also
+        --------
+        SimulatorGymResource.connect : Open a new session.
 
         Examples
         --------
@@ -219,6 +233,12 @@ class SimulatorGymResource:
             service refuses the session — an unknown symbol or date, most
             often. This resource raises ``RuntimeError`` rather than
             ``PulseAPIError`` because it speaks WebSocket, not HTTP.
+
+        See Also
+        --------
+        GymSession.reset : Start an episode on the session.
+        GymSession.step : Advance it.
+        GymSession.close : End it.
 
         Notes
         -----

@@ -368,6 +368,12 @@ class ValidationResource:
             ``sim_id`` is unknown, or the tier does not allow a requested
             area.
 
+        See Also
+        --------
+        get_job_status : Poll the job without fetching its result.
+        get_job : The result once the job completes.
+        list_jobs : Earlier validation jobs.
+
         Examples
         --------
         Platform simulations against the real day:
@@ -534,6 +540,11 @@ class ValidationResource:
             If ``job_id`` is unknown or belongs to another account — status
             404.
 
+        See Also
+        --------
+        run : Submit a validation job.
+        get_job_status : Poll without fetching the result.
+
         Examples
         --------
         >>> result = client.validation.get_job(job_id)
@@ -586,6 +597,11 @@ class ValidationResource:
         PulseAPIError
             If the job does not exist or belongs to another key — status 404.
 
+        See Also
+        --------
+        get_job : The result once the job completes.
+        run : Submit a validation job.
+
         Examples
         --------
         >>> import time
@@ -617,6 +633,11 @@ class ValidationResource:
         ------
         PulseAPIError
             If the key is invalid, revoked or expired — status 401.
+
+        See Also
+        --------
+        get_job : One job's result.
+        run : Submit a validation job.
 
         Examples
         --------

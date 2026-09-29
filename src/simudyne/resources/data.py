@@ -306,6 +306,12 @@ class DataResource:
             If the key is not demo tier (403), or there is no raw market data
             for the symbol on ``cal_date`` (400).
 
+        See Also
+        --------
+        available_data : Days that exist and could be calibrated.
+        calibrated_data : Days already calibrated, where this one lands.
+        simudyne.resources.simulation.SimulationResource.run : Simulate a calibrated day.
+
         Notes
         -----
         Calibration is only needed for a symbol-day that is not already

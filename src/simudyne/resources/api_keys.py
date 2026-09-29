@@ -44,6 +44,11 @@ class ApiKeysResource:
         PulseAPIError
             If the account has reached its key limit, or ``name`` is rejected.
 
+        See Also
+        --------
+        list : Every active key on the account.
+        revoke : Deactivate a key.
+
         Examples
         --------
         >>> new_key = client.api_keys.create(name="Training script")
@@ -76,6 +81,11 @@ class ApiKeysResource:
         PulseAPIError
             If the calling key is invalid or has been revoked.
 
+        See Also
+        --------
+        create : Issue a new key.
+        revoke : Deactivate a key.
+
         Examples
         --------
         >>> for key in client.api_keys.list():
@@ -103,6 +113,11 @@ class ApiKeysResource:
         ------
         PulseAPIError
             If ``key_id`` does not exist or does not belong to your account.
+
+        See Also
+        --------
+        list : Find the key id to revoke.
+        create : Issue a replacement key.
 
         Examples
         --------
