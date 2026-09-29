@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.7.0-dev.19 (2026-09-29)
+
+### Bug Fixes
+
+- **docs**: Give every SDK method a See Also section
+  ([`21dbbb2`](https://github.com/simudyne/pulse-sdk/commit/21dbbb2e7a9d354456d0e0678b8e4c87bef912ff))
+
+- The 27 public methods without one now name their neighbours in numpydoc form, placed before
+  Notes/Examples, so every reference page links to the calls that come before and after it -
+  Docstring-only; no behaviour changes
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.18 (2026-09-22)
 
 ### Features
