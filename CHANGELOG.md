@@ -1,6 +1,127 @@
 # CHANGELOG
 
 
+## v0.8.0-dev.1 (2026-10-01)
+
+### Bug Fixes
+
+- **release**: Merge prod 0.7.3 into dev so dev versions sort above it
+  ([`f529605`](https://github.com/simudyne/pulse-sdk/commit/f5296055737995c17942619a14df6ef2e99ffd89))
+
+Dev already supersedes every prod change (the numpy docstring passes are on dev; prod's validation
+  run flags are the ones the API now rejects), so each conflict keeps dev. The merge makes v0.7.3
+  reachable from dev, so the next prerelease is cut above 0.7.3 instead of as 0.7.0-dev.N.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+### Features
+
+- **sdk**: Match pulse-api-pod 1.77 — engine fields, FM registry, readable errors
+  ([`c3ea30f`](https://github.com/simudyne/pulse-sdk/commit/c3ea30fd6fc872a630fd8720e1c45fad79308aad))
+
+- run() sends every engine-specific field the caller set, so the API rejects a misplaced model_id or
+  scenario with a 422 instead of the SDK dropping it and running the job without the caller's input
+  - Docs: scenario_params keys (incl. side) and the rules the API checks; exec order_size is in
+  lots; model_id accepts production names (400 ambiguous, 404 unknown); job status engine and FM
+  state fields - run_lrm takes start_time, scenario and scenario_params; get_jobs takes offset and
+  documents the {total, limit, offset, jobs} envelope - client.fm gains the admin registry calls:
+  registry, register, activate, deactivate - PulseAPIError keeps detail as sent plus the top-level
+  errors list, and renders 422 lists as "field: message" lines; non-dict bodies no longer raise
+  AttributeError - get_sim_data, get_sample_data and get_bulk_data go through the client's timeout,
+  retries and error handling - validation.get_job documents errors, historical_window and the poll
+  on get_job_status; api_keys.create(name) is optional - README quick start uses the current calls;
+  api-sync checklist and the repository URL point at what exists
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+
+## v0.7.3 (2026-09-22)
+
+### Bug Fixes
+
+- **sdk**: Numpy-style docstrings for the released endpoints
+  ([`11601e9`](https://github.com/simudyne/pulse-sdk/commit/11601e901867995d6d38144feca95cf2fc2d0567))
+
+Docs only — every file is byte-identical to 0.7.2 once docstrings are stripped, so no behaviour
+  changes.
+
+- Class docstrings for the 5 resources that had none, Examples sections for the methods missing one,
+  and Raises throughout - Lift examples out of Returns blocks into real Examples sections - Every
+  Raises block checked against pulse-api-pod rather than inferred: documents the 503/500 paths the
+  SDK proxies, the 400s on bulk download, and drops a claimed API-key limit that does not exist -
+  Rewrite example subscripts that mkdocs-autorefs misread as reference links, taking the pulse-sdk
+  docs build to zero warnings
+
+validation.py is left alone: its API on prod differs from dev's, so its docstrings need writing
+  against this signature rather than porting.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.2 (2026-09-21)
+
+### Bug Fixes
+
+- **docs**: Convert the SDK docstrings to numpy style
+  ([`653b1e4`](https://github.com/simudyne/pulse-sdk/commit/653b1e4b330dbf8adf44d627b29ab020da673f3c))
+
+pulse-docs sets docstring_style: numpy in mkdocs.yml and renders the SDK from this branch, but the
+  docstrings here were Google style. griffe's numpy parser does not recognise Args:/Returns:, so
+  each one collapsed into a single undifferentiated text section and the SDK reference rendered as
+  flat prose with no parameter or returns tables.
+
+- Convert the 23 Google-style docstrings across simulation, validation, simulator_gym and data -
+  Give api_keys.create/list/revoke and profile.get/usage docstrings at all; five endpoints had none,
+  so they rendered as a bare signature - Rewrite profile.downloads in numpy sections
+
+All 34 public methods now parse with griffe's numpy parser, 72 parameters among them, with no
+  undocumented arguments and no Google-style left.
+
+Docstrings only: the executable code of every touched file is identical to origin/prod once
+  docstrings are stripped. Nothing from dev is included.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
+## v0.7.1 (2026-08-18)
+
+### Bug Fixes
+
+- **validation**: Restore the pre-0.7.0 run flag defaults
+  ([`7eb73fe`](https://github.com/simudyne/pulse-sdk/commit/7eb73fec5a90868e0facd977d7cfa02e916f0303))
+
+0.7.0 made run_metrics/run_impact/run_fid tri-state and omitted them when unset, which changed
+  behaviour for existing callers: the API's non-demo default for run_impact is True, so a pro user
+  passing no flags started paying for the impact pass that this SDK had always defaulted off. It
+  also inserted a parameter mid-signature, shifting positional arguments.
+
+- Send run_metrics/run_impact/run_fid explicitly again, with their original defaults, so any 0.6.x
+  caller behaves identically - Keep run_stylised_facts as the one addition, appended last in both
+  run() and run_pipeline() so no positional argument moves; omitted when unset so demo accounts
+  still get stylised facts from the tier default
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0 (2026-08-18)
+
+### Features
+
+- **validation**: Let the tier pick which validation passes run
+  ([`a710031`](https://github.com/simudyne/pulse-sdk/commit/a7100314be2e03dc3a0105ac9c217dc89e3dd50a))
+
+- Default run_metrics/run_impact/run_fid to None and omit them from the payload when unset, so the
+  API applies the caller's tier default instead of an SDK-side False that opts demo accounts out of
+  their extra results - Add run_stylised_facts, which the API accepted but the SDK never exposed -
+  Document the demo-only result fields on get_job()
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v0.7.0-dev.19 (2026-09-29)
 
 ### Bug Fixes
