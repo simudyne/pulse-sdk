@@ -16,7 +16,7 @@ class ApiKeysResource:
     def __init__(self, client):
         self._client = client
 
-    def create(self, name: str):
+    def create(self, name: str = ""):
         """Mint a new API key.
 
         The only call that ever returns the key material. It is shown once —
@@ -24,10 +24,10 @@ class ApiKeysResource:
 
         Parameters
         ----------
-        name : str
+        name : str, default ""
             A label for the key. Name it by purpose ("notebook",
             "production", "CI pipeline") so you know which to revoke if one
-            is compromised.
+            is compromised. Left blank, the key is named after the account.
 
         Returns
         -------
@@ -36,15 +36,22 @@ class ApiKeysResource:
                 The key material, shown exactly once.
             api_key_id : str
                 The handle to pass to :meth:`revoke`.
+            key_prefix : str
+                The first characters of the key, as :meth:`list` shows it.
+            name : str
+                The label the key was stored under.
             warning : str
                 A reminder that the key will not be shown again.
 
         Raises
         ------
         PulseAPIError
-            If the key authenticating the call is invalid, inactive or
-            expired — status 401. The endpoint itself rejects nothing: there
-            is no cap on how many keys an account may hold.
+            If the account has reached its key limit, or ``name`` is rejected.
+
+        See Also
+        --------
+        list : Every active key on the account.
+        revoke : Deactivate a key.
 
         Examples
         --------
@@ -76,8 +83,12 @@ class ApiKeysResource:
         Raises
         ------
         PulseAPIError
-            If the key authenticating the call is invalid, inactive or
-            expired — status 401.
+            If the calling key is invalid or has been revoked.
+
+        See Also
+        --------
+        create : Issue a new key.
+        revoke : Deactivate a key.
 
         Examples
         --------
@@ -105,8 +116,12 @@ class ApiKeysResource:
         Raises
         ------
         PulseAPIError
-            If ``key_id`` does not exist or does not belong to your account —
-            status 404, ``"API key not found"``.
+            If ``key_id`` does not exist or does not belong to your account.
+
+        See Also
+        --------
+        list : Find the key id to revoke.
+        create : Issue a replacement key.
 
         Examples
         --------

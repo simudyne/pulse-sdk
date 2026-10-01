@@ -1,26 +1,243 @@
 """
 Validation Resource for the Pulse SDK.
 
-This module provides methods for validating simulation quality by comparing
-simulated LOB data against historical data using distributional metrics,
-impact response analysis, and FID scores.
+Compares simulated LOB data against a historical day using distributional
+metrics, impact response, Cont's stylised facts, cross-level volume
+correlation, and the MIND/FID inception distances on DeepLOB embeddings.
 
-Workflow:
-    1. Submit a validation job with run() -> returns job_id
-    2. Poll status with get_job(job_id) or use run_pipeline() for blocking
-    3. View results including distances and plots
-    4. List past jobs with list_jobs()
+Submit, then poll::
+
+    job = client.validation.run(
+        symbol="BARC", date="2026-06-17", provider="bmll", exchange="lse",
+        sim_ids=[...],
+    )
+    result = client.validation.get_job(job["job_id"])
+    result["distances"]["spread"]["l1"]        # per simulation
+    result["stylised_fact_verdicts"]["heavy_tails"]
+
+``run`` submits and returns; a validation of a real day takes minutes, so
+``get_job`` is the status endpoint you call until it is done. ``list_jobs``
+reaches past runs.
+
+Selecting metrics
+-----------------
+One flag per metric — ``statistical``, ``stylised_facts``, ``impact``,
+``volume_correlation``, ``fid``, ``mind``. Left as ``None`` each takes the
+default for your tier, resolved server-side, so naming none behaves exactly as
+your account is entitled to. Pass ``False`` to skip an expensive pass or
+``True`` to force one on.
+
+Tick size
+---------
+Read off the historical day — the metadata sidecar, else pulse_format's own
+metadata for that day's ``full_data.parquet``. It is not a parameter. The
+result reports ``metadata["ticksize"]`` and ``metadata["ticksize_source"]``;
+a source of ``"fallback"`` means none was found and 1.0 was assumed, which
+puts the impact response in price units rather than ticks.
+
+The historical gate
+-------------------
+Whether the historical half of the comparison comes back — the series in the
+JSON *and* the historical trace on any rendered plot — is decided by your tier,
+not by a parameter here. What is never gated: the L1 and Wasserstein
+``distances``, the FID and MIND scores, and the true/false
+``stylised_fact_verdicts`` for both the historical day and each simulation.
+Those are derived scalars and booleans, not series, so every tier receives
+them.
 """
 
-import time
-import base64
+import json
+from collections.abc import Iterable
+from pathlib import Path
 
 
 RUN_PATH = "/validation/run"
+UPLOAD_PATH = "/validation/run/upload"
 JOBS_PATH = "/validation/jobs"
+
+#: The API rejects more per job; checked client-side so a 26-file submission
+#: fails before any bytes are uploaded.
+MAX_SIM_FILES = 25
+
+#: One flag per area of checking. Left unset each takes the server's default.
+_AREA_FLAGS = (
+    "statistical",
+    "stylised_facts",
+    "impact",
+    "volume_correlation",
+    "fid",
+    "mind",
+)
+
+#: ``lob`` marks the frames as L2 snapshots, which switches off anything
+#: needing the message stream; ``sample_period`` and ``match_generated_sample``
+#: set the grid the book is resampled onto; ``plots`` is False, True, or a list
+#: of plot ids.
+_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots")
+
+
+def _frame_to_parquet(entry, index: int):
+    """Normalise one simulated run to ``(filename, parquet bytes)``.
+
+    Accepts a path, a ``(filename, bytes)`` pair, or a polars / pandas
+    DataFrame, which is written to parquet in memory. The frame must be pulse
+    format -- the same shape the engine writes to ``sim_data.parquet`` -- which
+    the server validates; sending something else fails there, not here.
+    """
+    import io
+
+    if isinstance(entry, tuple):
+        return entry
+
+    # Duck-typed rather than imported: neither polars nor pandas is a hard
+    # dependency of the SDK, and importing one to test for the other would
+    # make it one.
+    writer = getattr(entry, "write_parquet", None)      # polars
+    if writer is not None:
+        buf = io.BytesIO()
+        writer(buf)
+        return f"sim_{index}.parquet", buf.getvalue()
+
+    writer = getattr(entry, "to_parquet", None)          # pandas
+    if writer is not None:
+        buf = io.BytesIO()
+        writer(buf, index=False)
+        return f"sim_{index}.parquet", buf.getvalue()
+
+    path = Path(entry)
+    return path.name, path.read_bytes()
+
+
+def _count(sims) -> int:
+    """How many runs this argument names, mapping or list."""
+    if sims is None:
+        return 0
+    if isinstance(sims, dict):
+        return sum(len(list(v)) for v in sims.values())
+    return len(sims)
+
+
+def _check_groups(sims, name: str) -> None:
+    """Every group's value is a list of runs, and a bare string is not one.
+
+    ``{"fm": "one.parquet"}`` is the natural thing to write for a group of
+    one. A string is iterable, so it used to count the path's characters as
+    runs and fail on the total — a number the caller never wrote.
+    """
+    if not isinstance(sims, dict):
+        return
+    for group, runs in sims.items():
+        if isinstance(runs, (str, bytes)):
+            raise ValueError(
+                f"{name}[{group!r}] must be a list of runs, not a "
+                f"single {type(runs).__name__} — write [{runs!r}]"
+            )
+        if not isinstance(runs, Iterable):
+            raise ValueError(
+                f"{name}[{group!r}] must be a list of runs, not "
+                f"{type(runs).__name__}"
+            )
+
+
+def _flatten(sims, *, offset: int, unnamed):
+    """``(flat runs, {name: [indices]} | None)``, indices starting at offset.
+
+    A job may draw from two sources at once: the uploaded files take the first
+    slots and the platform runs follow, so the second source's indices start
+    past the first. ``unnamed`` names a bare list so it can be a population
+    beside a named one; None leaves it ungrouped, as a single-source job has
+    always been.
+    """
+    if isinstance(sims, dict):
+        flat, groups, at = [], {}, offset
+        for name, runs in sims.items():
+            runs = list(runs)
+            if not runs:
+                raise ValueError(f"Group {name!r} has no simulations")
+            groups[name] = list(range(at, at + len(runs)))
+            at += len(runs)
+            flat.extend(runs)
+        return flat, groups
+    flat = list(sims)
+    if unnamed is None:
+        return flat, None
+    return flat, {unnamed: list(range(offset, offset + len(flat)))}
+
+
+def _build_config(n_levels, **flags) -> dict:
+    """The validation config as the API expects it.
+
+    Flags left as ``None`` are omitted rather than sent as null: the API reads
+    absence as "use my tier's default", and an explicit null would not do that.
+    """
+    config = {"n_levels": n_levels}
+    for name in _AREA_FLAGS + _EXTRA_FIELDS:
+        value = flags.get(name)
+        if value is not None:
+            config[name] = value
+
+    unknown = set(flags) - set(_AREA_FLAGS) - set(_EXTRA_FIELDS)
+    if unknown:
+        raise ValueError(
+            f"Unknown validation option(s): {sorted(unknown)}. "
+            f"Valid: {sorted(_AREA_FLAGS + _EXTRA_FIELDS)}"
+        )
+    return config
+
+
+def _save_plots(result: dict, plot_dir=None) -> list:
+    """Write the returned figures to disk and return the paths written.
+
+    The API sends rendered plots base64-encoded in the response. Left to
+    itself that is bytes you cannot look at, so when plots were asked for they
+    are written out: to ``plot_dir`` when given, otherwise the current
+    directory. The directory is created if it does not exist.
+    """
+    import base64
+
+    target = Path(plot_dir) if plot_dir is not None else Path.cwd()
+    target.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for category, entries in (result.get("plots") or {}).items():
+        for entry in entries or []:
+            content = entry.get("content_base64")
+            if not content:
+                continue
+            path = target / f"{entry.get('name') or category}.png"
+            path.write_bytes(base64.b64decode(content))
+            written.append(str(path))
+    return written
 
 
 class ValidationResource:
+    """Score simulated market data against a real historical day.
+
+    Reached as ``client.validation``. A job compares one or more simulated runs
+    — either platform ``sim_ids`` or your own uploaded frames — against the
+    real day for the same instrument, and reports distances, distribution
+    overlaps, stylised-fact verdicts and FID/MIND scores.
+
+    Jobs are asynchronous: :meth:`run` returns a ``job_id`` and :meth:`get_job`
+    is polled until it is terminal. A validation of a real day takes minutes.
+
+    Examples
+    --------
+    >>> import time
+    >>> job = client.validation.run(
+    ...     symbol="BARC", date="2025-09-02",
+    ...     provider="bmll", exchange="lse",
+    ...     sim_ids=["sim_abc", "sim_def"],
+    ...     plots=True,
+    ... )
+    >>> while True:
+    ...     result = client.validation.get_job(job["job_id"], plot_dir="figures/")
+    ...     if result["status"] in ("completed", "failed"):
+    ...         break
+    ...     time.sleep(30)
+    >>> result["distances"]
+    """
+
     def __init__(self, client):
         self._client = client
 
@@ -28,272 +245,433 @@ class ValidationResource:
         self,
         symbol: str,
         date: str,
-        sim_ids: list[str],
-        ticksize: float = 1.0,
-        run_metrics: bool = True,
-        run_impact: bool = False,
-        run_fid: bool = False,
+        provider: str,
+        exchange: str,
+        *,
+        sim_ids=None,
+        sim_files=None,
+        statistical=None,
+        stylised_facts=None,
+        impact=None,
+        volume_correlation=None,
+        fid=None,
+        mind=None,
+        lob=None,
+        sample_period=None,
+        match_generated_sample=None,
         n_levels: int = 10,
-        rescale_volumes: bool = True,
-        lot_size: int = 1,
-        run_stylised_facts: bool | None = None,
+        plots=None,
     ) -> dict:
         """Submit a validation job.
 
-        Compares simulation output against historical market data using
-        distributional distance metrics (L1, Wasserstein), impact response
-        curves, and FID scores.
-
-        Historical data is fetched automatically from GCS based on symbol and date.
-        Simulation data is fetched from each sim_id's sim_data.parquet in GCS.
+        Returns as soon as the job is accepted. Poll :meth:`get_job` for
+        status and, once it is complete, the result — a validation of a real
+        day takes minutes, which is far too long to hold a request open.
 
         Parameters
         ----------
         symbol : str
-            Trading symbol (e.g. "700.HK")
+            Trading symbol, e.g. ``"BARC"`` or ``"700.HK"``.
         date : str
-            Calibration date in YYYY-MM-DD format (e.g. "2025-09-01")
-        sim_ids : list[str]
-            List of simulation IDs to validate (max 25)
-        ticksize : float, default 1.0
-            Tick size for the symbol
-        run_metrics : bool, default True
-            Compute L1/Wasserstein distributional distances
-        run_impact : bool, default False
-            Compute impact response curves
-        run_fid : bool, default False
-            Compute Frechet Inception Distance
-        run_stylised_facts : bool, optional
-            Compute stylised facts (autocorrelation, heavy
-            tails, volatility clustering). Left unset it is omitted from the
-            request, so the API applies your tier's default — demo accounts
-            get them, pro accounts do not.
+            Calibration date, ``"YYYY-MM-DD"``. The historical day compared
+            against.
+        provider : str
+            Data provider, ``"bmll"`` or ``"omd"``. Required: the same symbol
+            exists under both with different dates and tick sizes, so
+            ``(symbol, provider, exchange)`` is the identity, not the symbol.
+        exchange : str
+            Exchange, e.g. ``"lse"`` or ``"hkex_securities"``. The tick size
+            is read off the historical day for this instrument rather than
+            passed in; ``metadata["ticksize"]`` reports the value used and
+            ``metadata["ticksize_source"]`` where it came from.
+        sim_ids : list of str or dict, optional
+            Platform simulation IDs, 1 to 25. A flat list is one unnamed
+            population. A mapping — ``{"fm": [...], "abm": [...]}`` — compares
+            the named populations: distances, distributions, verdicts and
+            FID/MIND scores come back keyed by name, and the summary figures
+            draw one series per name instead of averaging them together.
+        sim_files : list or dict, optional
+            Your own simulated runs: paths, ``(filename, bytes)`` pairs, or
+            polars / pandas DataFrames in pulse format. Grouped the same way
+            as ``sim_ids``. The historical side is fetched for you.
+
+            At least one of ``sim_ids`` and ``sim_files`` is required, and
+            both together is allowed — your own model against platform runs,
+            on one set of figures. 25 runs in total across the two. With both
+            present each source is a population of its own, so a bare list
+            gets a name rather than merging into whatever else is there:
+
+            =========================== ==============================
+            passed                      populations
+            =========================== ==============================
+            files mapping + ids list    its names, plus ``platform``
+            files list + ids mapping    ``uploaded``, plus its names
+            both lists                  ``uploaded`` and ``platform``
+            both mappings               their own names
+            either one alone            exactly as before
+            =========================== ==============================
+
+            Every population is pooled and averaged, and drawn as its own
+            radar polygon, verdict-grid column and correlation heatmap.
+        statistical, stylised_facts, impact, volume_correlation, fid, mind : bool, optional
+            Whether to run each area. ``None`` uses your tier's default.
+        lob : bool, optional
+            The frames are L2 snapshots. Anything needing the message stream
+            is skipped, with the reason reported in
+            ``metadata["areas_skipped"]``.
+        sample_period : str, optional
+            The grid the book is resampled onto in lob mode, e.g. ``"1s"``.
+            Omitted, the cadence is read off your generated frames; if those
+            are event-level there is no grid to match and nothing is
+            resampled.
+        match_generated_sample : bool, optional
+            Match the generated frames' grid even when ``sample_period`` is
+            given.
         n_levels : int, default 10
-            Number of L2 book levels to use
-        rescale_volumes : bool, default True
-            Multiply simulated L2 size columns by lot_size
-        lot_size : int, default 1
-            Lot size multiplier for volume rescaling
+            Book levels to measure over.
+        plots : bool or list of str, optional
+            ``None`` or ``False`` draws nothing, ``True`` draws every figure
+            the enabled areas can draw, and a list draws just those ids.
+            An area switched off draws nothing either way. Rendered
+            server-side; :meth:`get_job` writes them to disk. The ids are
+
+            - ``statistical.radar`` — the distance spider, one polygon per
+              population
+            - ``statistical.distribution`` — every metric's KDE;
+              ``statistical.distribution.{metric}`` for one, e.g. ``.spread``
+            - ``stylised_facts.overall`` — the verdict table
+            - ``stylised_facts.fact`` — every fact;
+              ``stylised_facts.fact.{name}`` for one, e.g. ``.heavy_tails``
+            - ``impact.response`` — impact response by event type
+            - ``impact.event`` — every event type; ``impact.event.{type}``
+              for one
+            - ``volume_correlation.levels``, ``volume_correlation.changes``,
+              or ``volume_correlation.overall`` for both
 
         Returns
         -------
-        dict with job_id, status, message
+        dict
+            ``{"job_id": str, "status": str, "message": str}``. Pass the
+            job_id to :meth:`get_job`.
+
+        Raises
+        ------
+        ValueError
+            If neither or both of ``sim_ids`` and ``sim_files`` are given,
+            either is empty, more than 25 runs are passed, or ``n_levels`` is
+            below 1. Also raised when a named population maps to a single
+            string or a non-iterable instead of a list of runs, when an
+            unknown option name is passed, and when the API accepts the
+            request but returns no ``job_id``.
+        PulseAPIError
+            If the instrument has no historical data for ``date``, a
+            ``sim_id`` is unknown, or the tier does not allow a requested
+            area.
+
+        See Also
+        --------
+        get_job_status : Poll the job without fetching its result.
+        get_job : The result once the job completes.
+        list_jobs : Earlier validation jobs.
+
+        Examples
+        --------
+        Platform simulations against the real day:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC",
+        ...     date="2025-09-02",
+        ...     provider="bmll",
+        ...     exchange="lse",
+        ...     sim_ids=["sim_abc", "sim_def"],
+        ... )
+        >>> job["job_id"]
+        'val_01H...'
+
+        Two named populations, compared against each other and the real day:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_ids={"fm": ["sim_abc"], "abm": ["sim_def", "sim_ghi"]},
+        ... )
+
+        Your own frames, with only the areas you want and selected figures:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_files=[my_dataframe],
+        ...     statistical=True,
+        ...     stylised_facts=True,
+        ...     impact=False,
+        ...     plots=["statistical.radar", "stylised_facts.overall"],
+        ... )
+
+        L2 snapshots resampled onto a one-second grid:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_files=["book_snapshots.parquet"],
+        ...     lob=True,
+        ...     sample_period="1s",
+        ... )
         """
-        # run_metrics/run_impact/run_fid keep sending their long-standing values
-        # so existing callers see no change. run_stylised_facts is omitted when
-        # unset, letting the API apply the tier default; sending False would opt
-        # demo accounts out of results that tier is meant to return.
-        config = {
-            "run_metrics": run_metrics,
-            "run_impact": run_impact,
-            "run_fid": run_fid,
-            "n_levels": n_levels,
-            "rescale_volumes": rescale_volumes,
-            "lot_size": lot_size,
-        }
-        if run_stylised_facts is not None:
-            config["run_stylised_facts"] = run_stylised_facts
+        if sim_ids is None and sim_files is None:
+            raise ValueError("Pass sim_ids, sim_files, or both")
+        if sim_ids is not None and not sim_ids:
+            raise ValueError("sim_ids must not be empty")
+        if sim_files is not None and not sim_files:
+            raise ValueError("sim_files must not be empty")
+        _check_groups(sim_files, "sim_files")
+        _check_groups(sim_ids, "sim_ids")
+        if _count(sim_files) + _count(sim_ids) > MAX_SIM_FILES:
+            raise ValueError(
+                f"Maximum {MAX_SIM_FILES} simulations per validation job, "
+                "sim_files and sim_ids together"
+            )
+        if n_levels < 1:
+            raise ValueError("n_levels must be at least 1")
 
-        payload = {
-            "symbol": symbol,
-            "date": date,
-            "sim_ids": sim_ids,
-            "ticksize": ticksize,
-            "config": config,
-        }
-        return self._client._request("POST", RUN_PATH, json=payload)
+        config = _build_config(
+            n_levels,
+            statistical=statistical,
+            stylised_facts=stylised_facts,
+            impact=impact,
+            volume_correlation=volume_correlation,
+            fid=fid,
+            mind=mind,
+            lob=lob,
+            sample_period=sample_period,
+            match_generated_sample=match_generated_sample,
+            plots=plots,
+        )
 
-    def get_job(self, job_id: str) -> dict:
-        """Get validation job status and results.
+        # Platform runs alone go as JSON; anything with files of your own
+        # goes multipart, because bytes cannot travel in the JSON body. The
+        # upload endpoint takes sim_ids too, so a mixed job is one request.
+        if sim_files is None:
+            submitted = self._client._request(
+                "POST",
+                RUN_PATH,
+                json={
+                    "symbol": symbol,
+                    "date": date,
+                    "provider": provider,
+                    "exchange": exchange,
+                    "sim_ids": (
+                        {k: list(v) for k, v in sim_ids.items()}
+                        if isinstance(sim_ids, dict)
+                        else list(sim_ids)
+                    ),
+                    "config": config,
+                },
+            )
+        else:
+            # The uploads take the first slots of the combined run list and
+            # the platform runs follow. Only the uploads' own grouping is sent:
+            # the server offsets the platform runs past the files and names a
+            # bare list on either side, so the offset has one implementation
+            # rather than two that can disagree.
+            flat, groups = _flatten(sim_files, offset=0, unnamed=None)
+
+            # Three-tuple parts: the content type matters to the server's
+            # multipart parser, so it is sent explicitly.
+            files = [
+                ("sim_files", (*_frame_to_parquet(entry, i), "application/octet-stream"))
+                for i, entry in enumerate(flat)
+            ]
+            # Multipart has no nesting, so the grouping rides in the config
+            # and the ids in a JSON string field.
+            if groups:
+                config = {**config, "sim_groups": groups}
+            data = {
+                "symbol": symbol,
+                "date": date,
+                "provider": provider,
+                "exchange": exchange,
+                "config": json.dumps(config),
+            }
+            if sim_ids is not None:
+                data["sim_ids"] = json.dumps(
+                    {k: list(v) for k, v in sim_ids.items()}
+                    if isinstance(sim_ids, dict)
+                    else list(sim_ids)
+                )
+            submitted = self._client._request(
+                "POST", UPLOAD_PATH, files=files, data=data
+            )
+
+        if not (submitted or {}).get("job_id"):
+            raise ValueError(f"Validation API returned no job_id: {submitted}")
+        return submitted
+
+
+    def get_job(self, job_id: str, plot_dir=None) -> dict:
+        """Fetch a validation job's status, and its result once it is done.
+
+        The result is large, so poll :meth:`get_job_status` until
+        ``is_complete`` and call this once. Calling it before then is safe and
+        returns the status alone.
 
         Parameters
         ----------
         job_id : str
-            The job ID returned by run()
+            From :meth:`run`.
+        plot_dir : str or Path, optional
+            Where to write any figures the job rendered. Defaults to the
+            current directory; created if it does not exist. Only has an
+            effect once the job is complete and only if ``plots`` was set on
+            the run. The paths written come back in ``plot_paths``.
 
         Returns
         -------
-        dict with
-            - status: "pending", "running", "completed", or "failed"
-            - distances: dict of {metric: {l1: [...], w: [...]}} (when completed)
-            - metadata: dict with run parameters, including which passes ran
-            - error: error message (when failed)
+        dict
+            ``job_id``, ``status``, ``symbol``, ``date``, ``created_at``,
+            ``completed_at`` and, once complete: ``metadata``, ``distances``,
+            ``distributions``, ``impact_response``, ``stylised_facts``,
+            ``stylised_fact_verdicts``, ``volume_correlation``,
+            ``fid_scores``, ``mind_scores`` — enough to rebuild every figure —
+            plus ``plot_paths`` when figures were written.
 
-            Demo-tier accounts additionally receive the numbers derived from the
-            historical data, which are withheld at the pro tier:
+            ``errors`` is ``{area: "ExcType: message"}`` for every area that
+            was asked for but failed, or None when all of them ran. A
+            completed job can carry it: one area failing does not fail the
+            job, so check it before reading a missing payload as "nothing
+            computed". ``error`` is the reason a whole job failed.
 
-            - distributions: per-metric historical vs simulated histograms
-            - impact_response: impact response curves as numbers, historical and
-            one block per sim run
-            - stylised_facts: historical and one block per sim run
-            - fid_scores: one score per sim run (None where not computable)
+            ``distributions`` and ``stylised_facts`` carry historical series
+            and are None unless the key's tier includes historical output.
+            ``metadata["historical_window"]`` says which stretch of the
+            historical day the runs were scored against: a run covering part
+            of the day is compared with the same time of day, not the whole
+            day.
+
+        Raises
+        ------
+        PulseAPIError
+            If ``job_id`` is unknown or belongs to another account — status
+            404.
+
+        See Also
+        --------
+        run : Submit a validation job.
+        get_job_status : Poll without fetching the result.
+
+        Examples
+        --------
+        >>> result = client.validation.get_job(job_id)
+        >>> result["status"]
+        'running'
+
+        Poll to completion, writing any figures into a directory:
+
+        >>> import time
+        >>> while not client.validation.get_job_status(job_id)["is_complete"]:
+        ...     time.sleep(30)
+        >>> result = client.validation.get_job(job_id, plot_dir="figures/")
+        >>> if result.get("errors"):
+        ...     print("areas that failed:", result["errors"])
+        >>> print(result["plot_paths"])
+        ['figures/statistical.radar.png', 'figures/stylised_facts.overall.png']
+
+        With named populations, the scores come back keyed by name:
+
+        >>> result["fid_scores"]
+        {'fm': 0.142, 'abm': 0.318}
         """
-        return self._client._request("GET", f"{JOBS_PATH}/{job_id}")
+        job = self._client._request("GET", f"{JOBS_PATH}/{job_id}")
+        if (job or {}).get("plots"):
+            job["plot_paths"] = _save_plots(job, plot_dir)
+        return job
 
-    def list_jobs(self, limit: int = 50) -> dict:
-        """List validation jobs for the current user.
+    def get_job_status(self, job_id: str) -> dict:
+        """Where a validation job has got to, without its result.
+
+        The full result is large and tier-filtered, so a poll loop should ask
+        this instead of :meth:`get_job` and fetch the result once, when
+        ``is_complete`` turns true.
+
+        Parameters
+        ----------
+        job_id : str
+            A validation job handle from :meth:`run`.
+
+        Returns
+        -------
+        dict
+            ``{job_id, status, message, is_complete, created_at, updated_at}``.
+            ``status`` is one of pending / running / completed / failed, and
+            only the last two are terminal — which is what ``is_complete``
+            says, so a caller need not keep that list itself.
+
+        Raises
+        ------
+        PulseAPIError
+            If the job does not exist or belongs to another key — status 404.
+
+        See Also
+        --------
+        get_job : The result once the job completes.
+        run : Submit a validation job.
+
+        Examples
+        --------
+        >>> import time
+        >>> while not client.validation.get_job_status(job_id)["is_complete"]:
+        ...     time.sleep(30)
+        >>> result = client.validation.get_job(job_id, plot_dir="figures/")
+        """
+        return self._client._request("GET", f"{JOBS_PATH}/{job_id}/status")
+
+    def list_jobs(self, limit: int = 50, offset: int = 0) -> dict:
+        """List your validation jobs, newest first.
 
         Parameters
         ----------
         limit : int, default 50
-            Max number of jobs to return (default 50, max 200)
+            Maximum number of jobs to return. Capped at 200 by the API.
+        offset : int, default 0
+            Jobs to skip before this page, for paging through more than
+            ``limit`` of them.
 
         Returns
         -------
-        dict with jobs list and total count
-        """
-        return self._client._request("GET", JOBS_PATH, params={"limit": limit})
-
-    def run_pipeline(
-        self,
-        symbol: str,
-        date: str,
-        sim_ids: list[str],
-        ticksize: float = 1.0,
-        run_metrics: bool = True,
-        run_impact: bool = False,
-        run_fid: bool = False,
-        n_levels: int = 10,
-        rescale_volumes: bool = True,
-        lot_size: int = 1,
-        poll_interval: float = 3.0,
-        timeout: float = 600.0,
-        run_stylised_facts: bool | None = None,
-    ) -> dict:
-        """Submit a validation job and block until it completes.
-
-        Combines run() + polling get_job() into a single call.
-        Prints progress to stderr.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading symbol (e.g. "700.HK")
-        date : str
-            Calibration date in YYYY-MM-DD format
-        sim_ids : list[str]
-            List of simulation IDs to validate (max 25)
-        ticksize : float, default 1.0
-            Tick size for the symbol
-        run_metrics : bool, default True
-            Compute L1/Wasserstein distributional distances
-        run_impact : bool, default False
-            Compute impact response curves
-        run_fid : bool, default False
-            Compute Frechet Inception Distance
-        run_stylised_facts : bool, optional
-            Compute stylised facts (autocorrelation, heavy
-            tails, volatility clustering). Left unset it is omitted from the
-            request, so the API applies your tier's default — demo accounts
-            get them, pro accounts do not.
-        n_levels : int, default 10
-            Number of L2 book levels to use
-        rescale_volumes : bool, default True
-            Multiply simulated L2 size columns by lot_size
-        lot_size : int, default 1
-            Lot size multiplier for volume rescaling
-        poll_interval : float, default 3.0
-            Seconds between status checks (default 3)
-        timeout : float, default 600.0
-            Max seconds to wait (default 600)
-
-        Returns
-        -------
-        dict with full validation results (distances, plots, metadata)
+        dict
+            ``{total, limit, offset, jobs}``. ``jobs`` is the page, newest
+            first; ``total`` is your full job count rather than the page size,
+            so a caller can tell whether more pages exist.
 
         Raises
         ------
-        RuntimeError
-            If the validation job fails
-        TimeoutError
-            If the job doesn't complete within timeout
-        """
-        import sys
+        PulseAPIError
+            If the key is invalid, revoked or expired — status 401.
 
-        job = self.run(
-            symbol=symbol,
-            date=date,
-            sim_ids=sim_ids,
-            ticksize=ticksize,
-            run_metrics=run_metrics,
-            run_impact=run_impact,
-            run_fid=run_fid,
-            run_stylised_facts=run_stylised_facts,
-            n_levels=n_levels,
-            rescale_volumes=rescale_volumes,
-            lot_size=lot_size,
+        See Also
+        --------
+        get_job : One job's result.
+        run : Submit a validation job.
+
+        Examples
+        --------
+        >>> listing = client.validation.list_jobs(limit=10)
+        >>> for job in listing["jobs"]:
+        ...     print(job["job_id"], job["status"], job["symbol"], job["date"])
+
+        Find the most recent completed job and read it back:
+
+        >>> done = [j for j in listing["jobs"] if j["status"] == "completed"]
+        >>> newest = done[0]
+        >>> result = client.validation.get_job(newest["job_id"])
+
+        Page through the rest:
+
+        >>> seen = len(listing["jobs"])
+        >>> while seen < listing["total"]:
+        ...     page = client.validation.list_jobs(limit=10, offset=seen)
+        ...     seen += len(page["jobs"])
+        """
+        return self._client._request(
+            "GET", JOBS_PATH, params={"limit": limit, "offset": offset}
         )
-        job_id = job["job_id"]
-        print(f"Validation job submitted: {job_id}", file=sys.stderr)
-
-        start = time.time()
-        while True:
-            result = self.get_job(job_id)
-            status = result["status"]
-
-            if status == "completed":
-                elapsed = time.time() - start
-                print(f"Completed in {elapsed:.1f}s", file=sys.stderr)
-                return result
-            elif status == "failed":
-                raise RuntimeError(f"Validation failed: {result.get('error')}")
-
-            if time.time() - start > timeout:
-                raise TimeoutError(f"Validation job {job_id} timed out after {timeout}s")
-
-            time.sleep(poll_interval)
-
-    def display_plots(self, result: dict) -> "PlotDisplay":
-        """Return a PlotDisplay object for displaying validation plots.
-
-        Usage:
-            plots = client.validation.display_plots(result)
-            plots.distributions()    # show distribution histograms
-            plots.distances()        # show spider plots
-            plots.impact_response()  # show impact response plots
-
-        Parameters
-        ----------
-        result : dict
-            The result dict from run_pipeline() or get_job()
-        """
-        return PlotDisplay(result)
-
-
-class PlotDisplay:
-    """Displays categorized validation plots inline in Jupyter notebooks."""
-
-    def __init__(self, result: dict):
-        plots = result.get("plots") or {}
-        self._distributions = plots.get("distributions", [])
-        self._distances = plots.get("distances", [])
-        self._impact_response = plots.get("impact_response", [])
-
-    def _show(self, plot_list, title):
-        from IPython.display import display, Image
-
-        if not plot_list:
-            print(f"No {title} plots available")
-            return
-
-        for plot in plot_list:
-            print(f"\n--- {plot['name']} ---")
-            display(Image(data=base64.b64decode(plot["content_base64"])))
-
-    def distributions(self):
-        """Display distribution histogram plots."""
-        self._show(self._distributions, "distribution")
-
-    def distances(self):
-        """Display spider plots (L1 and Wasserstein distances)."""
-        self._show(self._distances, "distance")
-
-    def impact_response(self):
-        """Display impact response plots."""
-        self._show(self._impact_response, "impact response")
-
-    def all(self):
-        """Display all plots."""
-        self.distances()
-        self.distributions()
-        self.impact_response()

@@ -38,10 +38,10 @@ jobs:
           ### Checklist
 
           - [ ] Simulation endpoints — \`/simulation/run\`, \`/simulation/jobs\`, \`/simulation/results/*\`
-          - [ ] Data endpoints — \`/data/available-symbols\`
+          - [ ] Data endpoints — \`/data/available-data\`, \`/data/calibrated-data\`
           - [ ] Profile endpoints — \`/profile\`, \`/profile/usage\`
           - [ ] API key endpoints — \`/api-keys\`
-          - [ ] Calibration endpoints — \`/calibrate\`
+          - [ ] Calibration endpoints — \`/data/calibrate\`
           - [ ] Simulator gym WebSocket — \`/ws/simulator-gym\`
           - [ ] Request/response shapes unchanged (or SDK updated to match)
           - [ ] If SDK changes were needed: commit with \`feat:\` or \`fix:\` to trigger a release

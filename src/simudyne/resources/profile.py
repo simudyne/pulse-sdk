@@ -48,6 +48,12 @@ class ProfileResource:
         PulseAPIError
             If the key is invalid, revoked or expired — status 401.
 
+        See Also
+        --------
+        usage : Requests this month, by endpoint.
+        downloads : The download quota and what it has been spent on.
+        simudyne.resources.api_keys.ApiKeysResource.list : The account's API keys.
+
         Examples
         --------
         >>> me = client.profile.get()
@@ -85,6 +91,11 @@ class ProfileResource:
         ------
         PulseAPIError
             If the key is invalid, revoked or expired — status 401.
+
+        See Also
+        --------
+        get : The account itself.
+        downloads : The download quota.
 
         Examples
         --------
@@ -124,6 +135,12 @@ class ProfileResource:
                 Every group you have ever downloaded. None when unlimited.
             downloaded_group_details : list of dict or None
                 The same groups, each with a ``downloaded_at`` timestamp.
+
+        See Also
+        --------
+        usage : Requests this month, by endpoint.
+        simudyne.resources.simulation.SimulationResource.get_bulk_data : Download many runs at once.
+        simudyne.resources.simulation.SimulationResource.get_sim_data : Download one run's files.
 
         Notes
         -----

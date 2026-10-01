@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v0.8.0-dev.1 (2026-10-01)
+
+### Bug Fixes
+
+- **release**: Merge prod 0.7.3 into dev so dev versions sort above it
+  ([`f529605`](https://github.com/simudyne/pulse-sdk/commit/f5296055737995c17942619a14df6ef2e99ffd89))
+
+Dev already supersedes every prod change (the numpy docstring passes are on dev; prod's validation
+  run flags are the ones the API now rejects), so each conflict keeps dev. The merge makes v0.7.3
+  reachable from dev, so the next prerelease is cut above 0.7.3 instead of as 0.7.0-dev.N.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+### Features
+
+- **sdk**: Match pulse-api-pod 1.77 — engine fields, FM registry, readable errors
+  ([`c3ea30f`](https://github.com/simudyne/pulse-sdk/commit/c3ea30fd6fc872a630fd8720e1c45fad79308aad))
+
+- run() sends every engine-specific field the caller set, so the API rejects a misplaced model_id or
+  scenario with a 422 instead of the SDK dropping it and running the job without the caller's input
+  - Docs: scenario_params keys (incl. side) and the rules the API checks; exec order_size is in
+  lots; model_id accepts production names (400 ambiguous, 404 unknown); job status engine and FM
+  state fields - run_lrm takes start_time, scenario and scenario_params; get_jobs takes offset and
+  documents the {total, limit, offset, jobs} envelope - client.fm gains the admin registry calls:
+  registry, register, activate, deactivate - PulseAPIError keeps detail as sent plus the top-level
+  errors list, and renders 422 lists as "field: message" lines; non-dict bodies no longer raise
+  AttributeError - get_sim_data, get_sample_data and get_bulk_data go through the client's timeout,
+  retries and error handling - validation.get_job documents errors, historical_window and the poll
+  on get_job_status; api_keys.create(name) is optional - README quick start uses the current calls;
+  api-sync checklist and the repository URL point at what exists
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+
 ## v0.7.3 (2026-09-22)
 
 ### Bug Fixes
@@ -82,6 +120,427 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   Document the demo-only result fields on get_job()
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.19 (2026-09-29)
+
+### Bug Fixes
+
+- **docs**: Give every SDK method a See Also section
+  ([`21dbbb2`](https://github.com/simudyne/pulse-sdk/commit/21dbbb2e7a9d354456d0e0678b8e4c87bef912ff))
+
+- The 27 public methods without one now name their neighbours in numpydoc form, placed before
+  Notes/Examples, so every reference page links to the calls that come before and after it -
+  Docstring-only; no behaviour changes
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.18 (2026-09-22)
+
+### Features
+
+- **validation**: Page the job list, and poll without the result
+  ([`83eb849`](https://github.com/simudyne/pulse-sdk/commit/83eb849e9b58f562a4da632077fd42842fe89311))
+
+pulse-api-pod 1.69.0 put GET /validation/jobs on the {total, limit, offset, jobs} envelope and added
+  GET /validation/jobs/{job_id}/status. The SDK reached neither: list_jobs sent no offset, so there
+  was no way past the first page, and a poll loop had to call get_job and pull the whole
+  tier-filtered result to read one string.
+
+- list_jobs(limit, offset), with the envelope documented and an example that pages to the end using
+  total. - get_job_status(job_id) — {job_id, status, message, is_complete, created_at, updated_at},
+  named to match simulation.get_job_status(). is_complete saves a caller keeping its own list of
+  terminal states.
+
+Nothing broke before this: list_jobs passed the API's dict straight through and never read the field
+  that went.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.17 (2026-09-22)
+
+### Features
+
+- **sdk**: Follow the API onto one data prefix and one run call
+  ([`cc91cc6`](https://github.com/simudyne/pulse-sdk/commit/cc91cc628365b017625d843812e9e51521635702))
+
+Mirrors pulse-api-pod 1.69.0, which collapsed three overlapping data endpoints into two and merged
+  foundation-model runs into the simulation routes.
+
+- client.data gains available_data() (everything in the registry, with an opt-in
+  include_calibration_state), calibrated_data() (what the ABM can simulate) and calibrate(), which
+  moved off client.simulation. Replaces get_available_symbols(); calibrated_data returns {total,
+  limit, offset, symbols} rather than a bare list, and the ticker is `symbol` with the issuer in
+  `company_name`. - client.simulation.run() takes engine="abm"|"fm" and submits both. It sends only
+  the fields belonging to the engine asked for, because the API rejects the other engine's fields
+  rather than ignoring them, and omits n_runs when unset so the per-engine default (5 and 1) lives
+  in one place. client.fm.run/job_status/job_logs/available_data are gone; FmResource keeps models()
+  and live(). - The `prompt` argument is dropped everywhere: the orchestrator builds every prompt
+  from the market identity and always discarded it. - Fixes a red test that still passed ticksize=
+  to ValidationResource.run(), removed in 4dcf91c. The assertions there are about multipart shape
+  and never checked it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.16 (2026-09-22)
+
+### Features
+
+- **validation**: Validate your own runs beside platform runs
+  ([`4ba3ddf`](https://github.com/simudyne/pulse-sdk/commit/4ba3ddf89d1f9a257759436da5676f52d1a7d17c))
+
+sim_ids and sim_files were mutually exclusive, so comparing your own model against platform
+  simulations meant two jobs and two sets of figures — never the one comparison you wanted.
+
+- Both may now be given, 25 runs in total across the two. Anything with files goes multipart, since
+  bytes cannot travel in a JSON body, and the upload endpoint takes sim_ids alongside them. - With
+  both present each source is a population of its own: a bare list becomes "uploaded" or "platform"
+  rather than merging into whatever else is there. Two mappings keep their own names. - Only the
+  uploads' grouping is sent. The server stages the files, then offsets the platform runs past them,
+  so the offset has one implementation rather than two that can disagree.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.15 (2026-09-22)
+
+### Features
+
+- **sdk**: Full numpy-style docstrings for every endpoint
+  ([`6ebaa8a`](https://github.com/simudyne/pulse-sdk/commit/6ebaa8a4d6de3ea539f393dc079df0509348a8e5))
+
+- Document all 9 resource modules: class docstrings for the 7 that had none, Examples sections for
+  the 17 methods missing one, and Raises on every method that can raise - Lift 49 lines of examples
+  out of Returns blocks into real Examples sections, where numpydoc renders them as runnable code -
+  Rewrite example subscripts that mkdocs-autorefs misread as markdown reference links, taking the
+  pulse-sdk docs build to zero warnings
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.14 (2026-09-22)
+
+### Features
+
+- **validation**: Stop asking for a tick size
+  ([`4dcf91c`](https://github.com/simudyne/pulse-sdk/commit/4dcf91cfbb1fb8667f7f742525398ab6735d1361))
+
+run() took a ticksize that never reached a computation. pulse-check reads the value off the
+  historical day — the metadata sidecar, else pulse_format's metadata for that day's
+  full_data.parquet — and the impact response has always used that one. The value passed here was
+  written over the result's metadata afterwards, so a job could report the tick size you sent beside
+  numbers computed with another.
+
+- ticksize is gone from run(), along with the "must be positive" check. - The docstring says where
+  the value now comes from: metadata["ticksize"] is what was used and metadata["ticksize_source"] is
+  where it came from, "fallback" meaning none was found and 1.0 was assumed — which puts the impact
+  response in price units rather than ticks.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.13 (2026-09-22)
+
+### Bug Fixes
+
+- **validation**: Say what is wrong when a group is not a list
+  ([`62c0455`](https://github.com/simudyne/pulse-sdk/commit/62c0455adf51c22a3f052c18a71da0e2a88a8653))
+
+sim_files={"fm": "one.parquet"} is the natural thing to write for a group of one. A string is
+  iterable, so it counted the path's 89 characters as 89 runs and failed with "Maximum 25
+  simulations per validation job" — a number the caller never wrote anywhere.
+
+- Each group's value is checked before it is counted, and the error names the group, its type, and
+  the list to write instead. - A non-iterable group (None, an int) is named plainly rather than
+  raising TypeError out of len().
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.12 (2026-09-22)
+
+### Bug Fixes
+
+- **docs**: List the impact.event family id
+  ([`60719d2`](https://github.com/simudyne/pulse-sdk/commit/60719d2f229456fb3a6f81a6fe5342ccb316a833))
+
+The plot id list gave impact.event.{type} but not the bare family form, which is the one selector
+  that draws every event type at once. Docs only — impact.event has always resolved.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.11 (2026-09-22)
+
+### Features
+
+- **validation**: Drop plot_all, document the plot ids
+  ([`bd405ff`](https://github.com/simudyne/pulse-sdk/commit/bd405ffa48f273909c2b8b0e3222443b55e35400))
+
+plot_all only ever meant plots=True — the service resolved it as `True if plot_all else plots` and
+  had no other use for it, so one of the two had to go and plots is the one that can also name a
+  figure.
+
+- run(plots=...): unset draws nothing, True draws every figure the enabled areas can draw, a list
+  draws just those ids. An area switched off draws nothing either way. - The ids are now written
+  down in the docstring and the README rather than living in pulse-check's README, since naming one
+  is the whole point of the list form.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.10 (2026-09-22)
+
+### Bug Fixes
+
+- **tests**: Take the in-progress test files back off dev
+  ([`593e329`](https://github.com/simudyne/pulse-sdk/commit/593e3291be1f3518bc0fc4ee6869f9fb3b4d88d7))
+
+They were staged in my working tree and my commit took the whole index rather than the paths I
+  named, so four unfinished files went up with the validation change. test_run_lrm.py imports
+  LRM_RUN_PATH, which simulation.py does not define, so `pytest tests/` aborted at collection on
+  dev.
+
+Removed from the branch and left in the working tree untouched, so they land when their author is
+  ready.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.9 (2026-09-22)
+
+### Features
+
+- **validation**: Named populations and plot_all
+  ([`46d5979`](https://github.com/simudyne/pulse-sdk/commit/46d5979b3daf4d05464303bd2ab790df2624ac1a))
+
+- sim_ids and sim_files accept either a flat list — one unnamed population, unchanged — or a mapping
+  of name to runs. Distances, distributions, verdicts and FID/MIND scores then come back keyed by
+  name, and the summary figures draw one series per population instead of averaging them together -
+  Grouped uploads travel flat with the grouping in the config, since multipart has no nesting - The
+  25-run cap counts the total across groups - plot_all draws everything the enabled areas can draw,
+  not just the summaries
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.8 (2026-09-21)
+
+### Bug Fixes
+
+- **validation**: Restore the multipart content type, and document the dev install
+  ([`deb242a`](https://github.com/simudyne/pulse-sdk/commit/deb242acfdd03462a6e86cd2bd1b8fe7052496fc))
+
+- run() was sending two-tuple file parts, dropping the application/octet-stream content type
+  run_upload used to set. The server's multipart parser cares; restored, with the test to hold it -
+  Port the run_upload tests in test_new_resources onto run(sim_files=...) and onto the
+  one-flag-per-area config - README: how to install from a checkout into the interpreter you
+  actually import from, how to check which copy you loaded, and how to clear an older `simudyne`
+  distribution shadowing the editable `simudyne-pulse` — the old one ships a real directory and wins
+  over a .pth, which surfaces as attributes missing from a version that predates them
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.7 (2026-09-21)
+
+### Features
+
+- **validation**: Three endpoints, one vocabulary
+  ([`857e4c4`](https://github.com/simudyne/pulse-sdk/commit/857e4c4197c5006c3e54b9d7f5247186ec0d034a))
+
+Matches pulse-check and the API pod so the same words mean the same thing everywhere.
+
+- run submits and returns; get_job is the status endpoint; list_jobs reaches past runs.
+  run_pipeline, run_upload, display_plots, PlotDisplay and inception_distances are gone — run_upload
+  folds into run as sim_files - One flag per area: statistical, stylised_facts, impact,
+  volume_correlation, fid, mind, plus lob/sample_period/match_generated_sample. Every run_*,
+  l2_only, plot_data and historical_output alias is gone. plot_data in particular was never the
+  caller's to set: the tier decides whether the historical half comes back, and dropping the
+  parameter does not loosen that - provider and exchange are required: the same symbol exists under
+  both providers with different dates and tick sizes, so (symbol, provider, exchange) is the
+  identity - get_job takes plot_dir and writes any rendered figures to disk, defaulting to the
+  current directory, returning the paths in plot_paths
+
+822 lines to 346.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v0.7.0-dev.6 (2026-09-21)
+
+### Bug Fixes
+
+- **docs**: Document every SDK endpoint in numpy style
+  ([`3a86f16`](https://github.com/simudyne/pulse-sdk/commit/3a86f16e1feba720093e4dcd54fd16b82524b547))
+
+An audit of all 45 public methods found gaps the format conversion did not touch, because these
+  docstrings had nothing to convert.
+
+- api_keys.create/list/revoke and profile.get/usage had NO docstring at all, so five endpoints
+  rendered in pulse-docs as a bare signature - validation.run, run_pipeline and run_upload accept
+  24-26 arguments and documented only some: the pulse-check 1.10.0 area flags (statistical,
+  stylised_facts, impact, volume_correlation, fid, mind) and the extra schema fields (lob,
+  sample_period, match_generated_sample, plots, historical_output) were described only in module
+  comments. run_upload was also missing the seven config flags it shares with run -
+  profile.downloads and display_plots had prose docstrings with no numpy sections
+
+griffe's numpy parser now reads all 45 docstrings and 156 parameters, up from 132, with zero
+  undocumented arguments across the SDK.
+
+Docstrings only: the executable code of every touched file is identical to origin/dev once
+  docstrings are stripped.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
+## v0.7.0-dev.5 (2026-09-21)
+
+### Bug Fixes
+
+- **docs**: Convert the SDK docstrings to numpy style
+  ([`0008571`](https://github.com/simudyne/pulse-sdk/commit/00085715413bbe9eac1a52b5734147704cb1e01c))
+
+pulse-docs sets docstring_style: numpy in mkdocs.yml, but every docstring was Google style. griffe's
+  numpy parser does not recognise Args:/Returns:, so each one collapsed into a single
+  undifferentiated text section and the SDK reference rendered as flat prose with no parameter or
+  returns tables.
+
+- Convert 34 docstrings across simulation, validation, fm, simulator_gym, data and fix; griffe now
+  parses 132 parameters that it previously saw as body text - Types and defaults come from the real
+  signatures, so "str | None" with a None default renders as "str, optional" rather than repeating
+  itself
+
+Docstrings only: the executable code of every touched file is identical to origin/dev once
+  docstrings are stripped.
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+
+## v0.7.0-dev.4 (2026-09-18)
+
+### Features
+
+- **validation**: Areas, sampling, plot selection and DataFrame runs
+  ([`b740519`](https://github.com/simudyne/pulse-sdk/commit/b7405191e9c402f48e4b6ae66f9a6033584a1c72))
+
+Exposes what pulse-check 1.10.0 added, all opt-in: a job naming none of it sends exactly the config
+  it sent before.
+
+- statistical / stylised_facts / impact / volume_correlation / fid / mind select areas of checking
+  individually - lob marks the frames as L2 snapshots; sample_period and match_generated_sample set
+  the grid the book is resampled onto - plots takes True or a list of plot ids; historical_output is
+  the demo-only gate that plot_data used to be - run_upload now accepts a polars or pandas DataFrame
+  per run as well as a path or a (name, bytes) pair, written to parquet in memory. The frame must be
+  pulse format, which the server validates
+
+The options are explicit keyword parameters rather than **options: the suite asserts that removed
+  spellings like run_fid raise TypeError, and a catch-all would have swallowed them into a
+  ValueError deeper down.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01MVGkF8JVCmPBi4UAcyS1K3
+
+
+## v0.7.0-dev.3 (2026-09-09)
+
+### Bug Fixes
+
+- Accept the documented filter params — get_available_symbols(q), get_jobs(limit)
+  ([`7ea5010`](https://github.com/simudyne/pulse-sdk/commit/7ea5010e90c68e40956b650feb25027e5bc20ee4))
+
+The docs suite's Response Shapes job checks the SDK against the live API and found two documented
+  parameters the SDK did not accept: the q substring search on /data/available-symbols (docs:
+  "searches ticker and company name") and the limit on /simulation/jobs (docs promise
+  jobs/total/returned paging). Both routes already support them; the SDK just never passed them
+  through.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+
+## v0.7.0-dev.2 (2026-09-09)
+
+### Documentation
+
+- **validation**: Mind/fid reach every tier as of pulse-api-pod 1.56.0
+  ([`fb92309`](https://github.com/simudyne/pulse-sdk/commit/fb923093bad9664b77e61adb7e277b27f6bd8efe))
+
+The scores were demo-only; the API now shares them with every validation tier since they are
+  aggregate scalars. Docstrings and the empty-score error message updated to say so.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+### Features
+
+- Complete the documented 0.8.0 surface — fm, fix, run_upload, job logs, LRM
+  ([`2cc74ee`](https://github.com/simudyne/pulse-sdk/commit/2cc74eec77cd21a664f1e93feaa6269893bd744f))
+
+The website docs (and its docs code-block suite) describe SDK methods that did not exist yet, which
+  is what the suite's simudyne-pulse>=0.8.0 tripwire pin guards against. This adds the missing
+  surface, matching the docs pages and the pulse-api-pod routes each method wraps:
+
+- validation.run_upload(): multipart POST /validation/run/upload for frames not stored in Pulse.
+  sim_files takes paths or (filename, bytes) pairs; 1-25 enforced client-side with ValueError before
+  any bytes move; same tri-state run flags as run() via a shared _build_config(). -
+  simulation.get_job_logs(): GET /simulation/jobs/{id}/logs, returned as the plain text it is (via
+  the retrying transport, not the JSON helper). - simulation.run_lrm(): POST /simulation/lrm/run,
+  mirroring LRMRunRequest — one algo per order size over a shared baseline. - fm resource: models(),
+  available_data() (registry search with server-side filters, None params omitted), run()
+  (duration_minutes/horizon, n_runs 1-8, model_args, device, exec_algos — unset fields omitted so
+  server defaults hold), live(), job_status(), job_logs(), and TERMINAL_STATUSES = {complete,
+  failed}, which the foundation-models docs page imports. - fix resource: usage().
+
+Also refreshes validation docstrings for the impact-response tier change (pulse 2.17.0 /
+  pulse-api-pod 1.62.0): the pass runs at every tier, the simulated curves are returned everywhere,
+  the historical block stays demo/plot_data-only, and get_job() documents impact_response_error.
+
+13 new payload tests in the existing recorder style; the 10 pre-existing test_simulator_gym failures
+  locally are a missing websocket-client in the local env, unchanged by this commit.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+
+## v0.7.0-dev.1 (2026-08-19)
+
+### Chores
+
+- **validation**: Take prod's validation.py (run_stylised_facts tri-state)
+  ([`d83e31b`](https://github.com/simudyne/pulse-sdk/commit/d83e31b8eac4e1d2898ca276554513c18215d424))
+
+dev is 4 commits behind prod and its validation.py lacks the run_stylised_facts tri-state added
+  there. Bringing that one file forward first so the inception-distance work below builds on it
+  instead of reverting it.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+### Features
+
+- **validation**: Mind/fid via run_inception_distances, drop dead params
+  ([`99cd8ba`](https://github.com/simudyne/pulse-sdk/commit/99cd8bad9f10b2cb8ef98a9518a4e258156ad77f))
+
+pulse-check 1.8.0 replaced the raw-feature FID with MIND and FID on DeepLOB embeddings — one
+  embedding pass computes both — and removed rescale_volumes/lot_size, since simudyne format is
+  always denominated in shares. The API (>= 1.55.1) returns mind_scores alongside fid_scores.
+
+- run_fid -> run_inception_distances, default True: the old name described one of the two metrics it
+  gates, so run_fid=False silently disabled MIND too. Still sent as the API's run_fid config field,
+  which keeps its name for existing HTTP clients. The old kwarg now raises TypeError rather than
+  being quietly ignored. - inception_distances(): one call returning {mind, fid, sim_ids, job_id},
+  forcing the other passes off so the job does a single embedding pass. Raises when the scores are
+  absent — a skipped pass and a non-demo key are both silent in the raw response. -
+  run_metrics/run_impact join run_stylised_facts and plot_data as tri-state (None = tier default,
+  omitted from the payload). Previously the SDK always sent run_impact=False, opting demo keys out
+  of a pass they are entitled to. - rescale_volumes/lot_size removed; l2_only, provider and exchange
+  added to match the API. get_job() documents mind_scores, the demo-tier rule, and that fid_scores
+  is now the embedding-space FID, not comparable with values stored by older jobs. -
+  tests/test_validation.py: 9 tests pinning the wire payload, the rename and the score handling.
+  None existed before.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 
 ## v0.6.1 (2026-08-05)

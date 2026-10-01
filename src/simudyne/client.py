@@ -8,7 +8,7 @@ from tqdm import tqdm
 import tempfile
 import math
 
-from simudyne.exceptions import PulseAPIError
+from simudyne.exceptions import PulseAPIError, error_from_response  # noqa: F401
 
 
 class PulseABM:
@@ -45,13 +45,18 @@ class PulseABM:
     api_keys : ApiKeysResource
         Create, list and revoke API keys.
     data : DataResource
-        The catalog of calibrated symbols available to simulate.
+        The market data catalogue: what exists, what is calibrated,
+        and calibrating a day.
     simulation : SimulationResource
         Submit agent-based simulations and retrieve their results.
-    simulator_gym : SimulatorGymResource
-        Gym-style reinforcement-learning environment over a WebSocket.
     validation : ValidationResource
         Score synthetic data against real data.
+    fm : FmResource
+        Foundation-model generation and its job lifecycle.
+    fix : FixResource
+        FIX gateway usage.
+    simulator_gym : SimulatorGymResource
+        Gym-style reinforcement-learning environment over a WebSocket.
 
     Raises
     ------
@@ -73,7 +78,7 @@ class PulseABM:
     ...     base_url="https://pulse-api-dev.simudyne.com",
     ...     timeout=60,
     ... )
-    >>> print(client.profile.get()["email"])
+    >>> client.profile.get()["email"]
     'you@example.com'
     """
 
@@ -101,6 +106,8 @@ class PulseABM:
         from simudyne.resources.profile import ProfileResource
         from simudyne.resources.api_keys import ApiKeysResource
         from simudyne.resources.data import DataResource
+        from simudyne.resources.fix import FixResource
+        from simudyne.resources.fm import FmResource
         from simudyne.resources.simulation import SimulationResource
         from simudyne.resources.simulator_gym import SimulatorGymResource
         from simudyne.resources.validation import ValidationResource
@@ -108,6 +115,8 @@ class PulseABM:
         self.profile = ProfileResource(self)
         self.api_keys = ApiKeysResource(self)
         self.data = DataResource(self)
+        self.fix = FixResource(self)
+        self.fm = FmResource(self)
         self.simulation = SimulationResource(self)
         self.simulator_gym = SimulatorGymResource(self)
         self.validation = ValidationResource(self)
@@ -129,11 +138,7 @@ class PulseABM:
                     time.sleep(delay)
                     continue
 
-                try:
-                    detail = response.json().get("detail", response.text)
-                except ValueError:
-                    detail = response.text
-                raise PulseAPIError(response.status_code, detail)
+                raise error_from_response(response)
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 last_exception = e
@@ -150,6 +155,12 @@ class PulseABM:
         response = self._request_with_retries(method, url, **kwargs)
         return response.json()
     
+    def _request_text(self, method: str, endpoint: str, **kwargs):
+        """Like _request, for endpoints that answer text/plain not JSON."""
+        url = f"{self.base_url}{endpoint}"
+        response = self._request_with_retries(method, url, **kwargs)
+        return response.text
+
     def _request_csv(self, method, endpoint, **kwargs):
         PAGE_SIZE = 100000
         params = kwargs.get("params", {})
