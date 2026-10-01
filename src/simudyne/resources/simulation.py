@@ -211,8 +211,10 @@ class SimulationResource:
               ms, s, min, m or h, e.g. "500ms", "5s", "1min"
             - start_time (str): when to begin, "HH:MM" or "HH:MM:SS", e.g.
               "10:30:00"
-            - side (str or None): "buy" or "sell", overriding the scenario's
-              own direction
+
+            There is no side: each scenario sets its own direction
+            (flash_crash, gradual_selloff and trending_down sell; buy_panic
+            and trending_up buy).
         exec_algos : list of dict, optional
             Execution algorithms, same shape and meaning on both engines. Each
             entry needs "type":
