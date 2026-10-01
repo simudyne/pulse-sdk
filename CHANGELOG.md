@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v0.8.0-dev.2 (2026-10-01)
+
+### Bug Fixes
+
+- **docs**: No side in scenario_params, and no image from the registry
+  ([`09c65a6`](https://github.com/simudyne/pulse-sdk/commit/09c65a6776be5873d0f7ab17bc16eb1b8538bc54))
+
+- Scenarios set their own direction (flash_crash, gradual_selloff, trending_down sell; buy_panic,
+  trending_up buy); pulse-api-pod now rejects scenario_params.side, so the docstring no longer
+  offers it - fm.registry() says the container image is not returned, matching the API, which strips
+  it from both model listings
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+
 ## v0.8.0-dev.1 (2026-10-01)
 
 ### Bug Fixes
