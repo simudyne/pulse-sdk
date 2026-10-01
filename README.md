@@ -5,8 +5,11 @@ Python client for the [Pulse](https://pulse.simudyne.com) synthetic market data 
 ## Installation
 
 ```bash
-pip install simudyne-pulse
+pip install "simudyne-pulse>=0.8.0"
 ```
+
+0.7.x predates the current API: its validation and data calls are rejected by
+pulse-api-pod 1.77 and later.
 
 The distribution is named `simudyne-pulse`; the import name is `simudyne`:
 
@@ -19,7 +22,7 @@ Requires Python 3.10+.
 ### Development builds
 
 The `dev` branch is a prerelease channel. Pushes to it publish prerelease
-versions (e.g. `0.6.0.dev1`) that are separate from the stable versions cut on
+versions (e.g. `0.8.0.dev1`) that are separate from the stable versions cut on
 `prod`. `pip install simudyne-pulse` always resolves to the latest **stable**
 release and ignores prereleases, so dev builds can never affect a normal
 install.
@@ -162,16 +165,29 @@ assert the exact payload the API would receive.
 ```python
 from simudyne import PulseABM
 
-client = PulseABM(api_key="pk_live_...")
+client = PulseABM(api_key="pk_live_...")  # or set SIMUDYNE_API_KEY
 
-# List available exchanges, symbols, and dates
-symbols = client.data.get_symbols(year=2024)
-print(symbols)
+# Days the agent-based model can simulate
+cal = client.data.calibrated_data(symbol="700.HK")
 
-# Fetch L2 order book data
-df = client.data.get_L2("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
-print(df.head())
+# Run it, poll, read the generated book
+job = client.simulation.run(
+    symbol="700.HK", cal_date="2025-09-02",
+    provider="omd", exchange="hkex_securities",
+)
+import time
+while not client.simulation.get_job_status(job["job_id"])["is_complete"]:
+    time.sleep(20)
+book = client.simulation.get_sim_data(job["sim_ids"][0])
 ```
+
+A foundation model runs through the same call with `engine="fm"` and a
+`model_id`, which may be the model's production name (e.g.
+`"flow-hkex-1-100M"`; see `client.fm.models()`). Fields that belong to the
+other engine are sent and rejected by the API with a 422 rather than dropped.
+
+Every method has a full numpy-style docstring (`help(client.simulation.run)`);
+the user guide is at https://pulse.simudyne.com/docs.
 
 ## API reference
 
@@ -182,35 +198,18 @@ print(df.head())
 | `api_key` | `SIMUDYNE_API_KEY` | required |
 | `base_url` | `SIMUDYNE_BASE_URL` | Pulse API |
 
-### `client.data`
+| Resource | What it covers |
+|----------|----------------|
+| `client.data` | `available_data` (every symbol-day that exists), `calibrated_data` (what the ABM can run), `calibrate` |
+| `client.simulation` | `run` (both engines), `run_lrm`, `get_jobs`, `get_job_status`, `get_job_results`, `get_job_logs`, sim files and downloads |
+| `client.validation` | `run`, `get_job_status`, `get_job`, `list_jobs` — results carry `errors` per failed area |
+| `client.fm` | `models`, `live`; admin: `registry`, `register`, `activate`, `deactivate` |
+| `client.fix` | FIX session usage |
+| `client.simulator_gym` | the interactive simulator websocket |
 
-All data methods return Polars DataFrames. Large result sets are automatically paginated.
-
-```python
-# Available exchanges, symbols, and dates
-client.data.get_symbols(year=2024)
-
-# L1: top of book (best bid/ask)
-client.data.get_L1("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
-
-# L2: full order book (all levels)
-client.data.get_L2("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T09:16:00")
-
-# Orders: individual order events
-client.data.get_orders("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
-
-# Trades: executed trades
-client.data.get_trades("HKEX", "HSIJ4", "2024-04-02T09:15:00", "2024-04-02T10:00:00")
-```
-
-**Parameters** (same for all data methods):
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `exchange` | str | Exchange code (e.g. `HKEX`) |
-| `sym` | str | Symbol name (e.g. `HSIJ4`) |
-| `datetime_start` | str | Start time, ISO 8601 (e.g. `2024-04-02T09:15:00`) |
-| `datetime_end` | str | End time, ISO 8601 |
+Failures raise `PulseAPIError` with `status_code`, `detail` (exactly as the
+API sent it) and `errors`; `str(exc)` renders validation errors as
+`field: message` lines.
 
 ### `client.profile`
 

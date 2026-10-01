@@ -16,7 +16,7 @@ class ApiKeysResource:
     def __init__(self, client):
         self._client = client
 
-    def create(self, name: str):
+    def create(self, name: str = ""):
         """Mint a new API key.
 
         The only call that ever returns the key material. It is shown once —
@@ -24,10 +24,10 @@ class ApiKeysResource:
 
         Parameters
         ----------
-        name : str
+        name : str, default ""
             A label for the key. Name it by purpose ("notebook",
             "production", "CI pipeline") so you know which to revoke if one
-            is compromised.
+            is compromised. Left blank, the key is named after the account.
 
         Returns
         -------
@@ -36,6 +36,10 @@ class ApiKeysResource:
                 The key material, shown exactly once.
             api_key_id : str
                 The handle to pass to :meth:`revoke`.
+            key_prefix : str
+                The first characters of the key, as :meth:`list` shows it.
+            name : str
+                The label the key was stored under.
             warning : str
                 A reminder that the key will not be shown again.
 

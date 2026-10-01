@@ -64,7 +64,9 @@ class DataResource:
             Keeps only the markets that model's ``supported_data`` declares, so
             what comes back is exactly what it will accept at
             :meth:`~simudyne.resources.simulation.SimulationResource.run` with
-            ``engine="fm"``. An unknown id raises.
+            ``engine="fm"``. A ``production_name`` (e.g. "flow-hkex-1-100M")
+            works too, matched as on ``run``. An unknown model raises (404),
+            and a name matching more than one model raises (400).
         symbol : str, optional
             Exact symbol, e.g. "700" or "TSCO".
         q : str, optional

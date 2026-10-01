@@ -33,7 +33,7 @@ test = ["pytest>=8.0.0"]
 [project.urls]
 Homepage = "https://pulse.simudyne.com"
 Documentation = "https://pulse.simudyne.com/docs"
-Repository = "https://github.com/simudyne/pulse-api"
+Repository = "https://github.com/simudyne/pulse-sdk"
 
 
 

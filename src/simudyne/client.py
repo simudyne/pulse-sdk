@@ -8,7 +8,7 @@ from tqdm import tqdm
 import tempfile
 import math
 
-from simudyne.exceptions import PulseAPIError
+from simudyne.exceptions import PulseAPIError, error_from_response  # noqa: F401
 
 
 class PulseABM:
@@ -111,8 +111,6 @@ class PulseABM:
         from simudyne.resources.simulation import SimulationResource
         from simudyne.resources.simulator_gym import SimulatorGymResource
         from simudyne.resources.validation import ValidationResource
-        from simudyne.resources.fm import FmResource
-        from simudyne.resources.fix import FixResource
 
         self.profile = ProfileResource(self)
         self.api_keys = ApiKeysResource(self)
@@ -122,8 +120,6 @@ class PulseABM:
         self.simulation = SimulationResource(self)
         self.simulator_gym = SimulatorGymResource(self)
         self.validation = ValidationResource(self)
-        self.fm = FmResource(self)
-        self.fix = FixResource(self)
 
     def _request_with_retries(self, method: str, url: str, **kwargs):
         """Execute request with timeout and exponential backoff for transient errors."""
@@ -142,11 +138,7 @@ class PulseABM:
                     time.sleep(delay)
                     continue
 
-                try:
-                    detail = response.json().get("detail", response.text)
-                except ValueError:
-                    detail = response.text
-                raise PulseAPIError(response.status_code, detail)
+                raise error_from_response(response)
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 last_exception = e

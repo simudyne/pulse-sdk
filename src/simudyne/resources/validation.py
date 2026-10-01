@@ -511,8 +511,9 @@ class ValidationResource:
     def get_job(self, job_id: str, plot_dir=None) -> dict:
         """Fetch a validation job's status, and its result once it is done.
 
-        This is the status endpoint: call it until ``status`` is
-        ``"completed"`` or ``"failed"``.
+        The result is large, so poll :meth:`get_job_status` until
+        ``is_complete`` and call this once. Calling it before then is safe and
+        returns the status alone.
 
         Parameters
         ----------
@@ -527,12 +528,25 @@ class ValidationResource:
         Returns
         -------
         dict
-            ``job_id``, ``status``, ``symbol``, ``date`` and, once complete:
-            ``metadata``, ``distances``, ``distributions``,
-            ``impact_response``, ``stylised_facts``,
+            ``job_id``, ``status``, ``symbol``, ``date``, ``created_at``,
+            ``completed_at`` and, once complete: ``metadata``, ``distances``,
+            ``distributions``, ``impact_response``, ``stylised_facts``,
             ``stylised_fact_verdicts``, ``volume_correlation``,
             ``fid_scores``, ``mind_scores`` — enough to rebuild every figure —
             plus ``plot_paths`` when figures were written.
+
+            ``errors`` is ``{area: "ExcType: message"}`` for every area that
+            was asked for but failed, or None when all of them ran. A
+            completed job can carry it: one area failing does not fail the
+            job, so check it before reading a missing payload as "nothing
+            computed". ``error`` is the reason a whole job failed.
+
+            ``distributions`` and ``stylised_facts`` carry historical series
+            and are None unless the key's tier includes historical output.
+            ``metadata["historical_window"]`` says which stretch of the
+            historical day the runs were scored against: a run covering part
+            of the day is compared with the same time of day, not the whole
+            day.
 
         Raises
         ------
@@ -554,11 +568,11 @@ class ValidationResource:
         Poll to completion, writing any figures into a directory:
 
         >>> import time
-        >>> while True:
-        ...     result = client.validation.get_job(job_id, plot_dir="figures/")
-        ...     if result["status"] in ("completed", "failed"):
-        ...         break
+        >>> while not client.validation.get_job_status(job_id)["is_complete"]:
         ...     time.sleep(30)
+        >>> result = client.validation.get_job(job_id, plot_dir="figures/")
+        >>> if result.get("errors"):
+        ...     print("areas that failed:", result["errors"])
         >>> print(result["plot_paths"])
         ['figures/statistical.radar.png', 'figures/stylised_facts.overall.png']
 

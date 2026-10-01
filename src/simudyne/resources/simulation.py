@@ -19,7 +19,6 @@ Calibration is not here — it is a data operation, at
 
 import io
 
-from simudyne.exceptions import PulseAPIError
 
 RUN_PATH = "/simulation/run"
 JOBS_PATH = "/simulation/jobs"
@@ -200,14 +199,20 @@ class SimulationResource:
             Scenarios are deliberately not implemented for foundation models;
             passing this with ``engine="fm"`` is an error, not a silent no-op.
         scenario_params : dict, optional
-            ABM only. Overrides the scenario's defaults. Keys:
+            ABM only. Overrides the scenario's defaults. Checked when the job
+            is submitted, including for ``scenario="normal"``; an unknown key
+            or an out-of-range value is a 422 naming the field. Keys:
 
-            - impact_multiplier (float): total volume as a multiple of resting
-              liquidity
-            - order_size_ratio (float): child order size as a fraction of
-              liquidity
-            - order_freq (str): child order spacing, e.g. "500ms", "5s"
-            - start_time (str): when to begin, e.g. "10:30:00"
+            - impact_multiplier (float, > 0): total volume as a multiple of
+              resting liquidity
+            - order_size_ratio (float, in (0, 1]): child order size as a
+              fraction of liquidity
+            - order_freq (str): child order spacing — a number and a unit of
+              ms, s, min, m or h, e.g. "500ms", "5s", "1min"
+            - start_time (str): when to begin, "HH:MM" or "HH:MM:SS", e.g.
+              "10:30:00"
+            - side (str or None): "buy" or "sell", overriding the scenario's
+              own direction
         exec_algos : list of dict, optional
             Execution algorithms, same shape and meaning on both engines. Each
             entry needs "type":
@@ -215,7 +220,8 @@ class SimulationResource:
             For TWAP/VWAP:
 
             - type: "twap" or "vwap" (required)
-            - order_size: total shares; negative = BUY, positive = SELL
+            - order_size: total size in LOTS (multiply by the instrument's
+              ``lot_size`` for shares); negative = BUY, positive = SELL
               (required)
             - horizon: execution window in SECONDS, e.g. 3600 (required)
             - start_time: e.g. "09:30:00" (optional, defaults to market open)
@@ -228,8 +234,11 @@ class SimulationResource:
             An FM job accepts at most one algo and needs a real market day —
             a testdata run cannot carry one.
         model_id : str, optional
-            FM only, required when ``engine="fm"``. A model id from
-            :meth:`~simudyne.resources.fm.FmResource.models`.
+            FM only, required when ``engine="fm"``. A ``model_id`` or a
+            ``production_name`` (e.g. "flow-hkex-1-100M") from
+            :meth:`~simudyne.resources.fm.FmResource.models`. Names match
+            ignoring case, spaces, underscores and dashes; the production name
+            is tried first. The job runs under the resolved ``model_id``.
         duration_minutes : float, optional
             FM only. Sim horizon as wall-clock minutes, measured from the first
             row of the warm-start context. The resulting frame count is
@@ -281,7 +290,13 @@ class SimulationResource:
 
             If a field does not belong to the chosen engine (422), e.g.
             ``scenario`` with ``engine="fm"`` or ``model_id`` with
-            ``engine="abm"``.
+            ``engine="abm"``. Every field you set is sent, so the API — not
+            the SDK — decides, and a misplaced field is never silently
+            dropped.
+
+            If ``scenario_params`` fails validation (422).
+
+            If ``model_id`` matches more than one model (400) or none (404).
 
         See Also
         --------
@@ -309,12 +324,12 @@ class SimulationResource:
         >>> job = client.simulation.run(
         ...     symbol="700", cal_date="2025-09-01",
         ...     provider="bmll", exchange="hkex_securities",
-        ...     engine="fm", model_id="pulse-lob-1", duration_minutes=30,
+        ...     engine="fm", model_id="flow-hkex-1-100M", duration_minutes=30,
         ... )
 
         A smoke test against the model's baked-in day — no market named at all:
 
-        >>> job = client.simulation.run(engine="fm", model_id="pulse-lob-1")
+        >>> job = client.simulation.run(engine="fm", model_id="flow-hkex-1-100M")
 
         An execution algorithm, on either engine:
 
@@ -324,7 +339,7 @@ class SimulationResource:
         ...     n_runs=20,
         ...     exec_algos=[{
         ...         "type": "twap",
-        ...         "order_size": -50000,  # negative = buy
+        ...         "order_size": -500,  # lots; negative = buy
         ...         "horizon": 3600,
         ...     }],
         ... )
@@ -353,26 +368,25 @@ class SimulationResource:
         if exec_algos:
             payload["exec_algos"] = self._serialize_exec_algos(exec_algos)
 
-        # Engine-specific fields are sent only when they belong to the engine
-        # asked for, and only when the caller actually set them: the API
-        # rejects a field belonging to the other engine rather than ignoring
-        # it, so passing a default through would fail every run of one kind.
-        if engine == "abm":
-            if scenario is not None:
-                payload["scenario"] = scenario
-            if scenario_params:
-                payload["scenario_params"] = scenario_params
-        else:
-            if model_id:
-                payload["model_id"] = model_id
-            if duration_minutes is not None:
-                payload["duration_minutes"] = duration_minutes
-            if horizon is not None:
-                payload["horizon"] = horizon
-            if device:
-                payload["device"] = device
-            if model_args:
-                payload["model_args"] = model_args
+        # Engine-specific fields are sent whenever the caller set them, on
+        # either engine. The API rejects a field that belongs to the other
+        # engine; dropping it here instead would run the job without the
+        # caller's input and say nothing. Unset defaults are never sent, so a
+        # plain run of either kind carries no stray fields.
+        if scenario is not None:
+            payload["scenario"] = scenario
+        if scenario_params is not None:
+            payload["scenario_params"] = scenario_params
+        if model_id:
+            payload["model_id"] = model_id
+        if duration_minutes is not None:
+            payload["duration_minutes"] = duration_minutes
+        if horizon is not None:
+            payload["horizon"] = horizon
+        if device:
+            payload["device"] = device
+        if model_args is not None:
+            payload["model_args"] = model_args
 
         return self._pro_request("POST", RUN_PATH, json=payload)
 
@@ -389,7 +403,7 @@ class SimulationResource:
             result.append(algo)
         return result
 
-    def get_jobs(self, limit: int = 100):
+    def get_jobs(self, limit: int = 100, offset: int = 0):
         """Get simulation jobs submitted by the authenticated user, newest first.
 
         Returns a list of jobs with their associated simulation IDs. Use this
@@ -398,7 +412,9 @@ class SimulationResource:
         Parameters
         ----------
         limit : int, default 100
-            Max jobs to return (default 100, max 500)
+            Max jobs to return, 1 to 500.
+        offset : int, default 0
+            Jobs to skip, for paging with ``limit``.
 
         Returns
         -------
@@ -408,12 +424,13 @@ class SimulationResource:
             - jobs (list of dict): one per job, each with ``job_id`` (str),
               ``sim_ids`` (list of str) and ``created_at`` (str)
             - total (int): total number of jobs on the account
-            - returned (int): jobs in this page
+            - limit (int), offset (int): the page that was returned
 
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier (403), or ``limit`` is above 500 (400).
+            If the key is not pro tier (403), or ``limit`` or ``offset`` is
+            out of range (422).
 
         See Also
         --------
@@ -434,13 +451,15 @@ class SimulationResource:
         >>> latest = jobs[0]
         >>> results = client.simulation.get_job_results(latest["job_id"])
         """
-        return self._pro_request("GET", JOBS_PATH, params={"limit": limit})
+        return self._pro_request(
+            "GET", JOBS_PATH, params={"limit": limit, "offset": offset}
+        )
 
     def get_job_status(self, job_id: str):
         """Get the status of all simulations in a job.
 
-        Use this to track simulation progress. Each simulation in the job goes
-        through states: queued -> running -> completed (or error).
+        Use this to track simulation progress, for either engine. Poll on
+        ``is_complete`` rather than on individual status strings.
 
         Parameters
         ----------
@@ -453,15 +472,20 @@ class SimulationResource:
             Job status containing:
 
             - job_id (str): the job identifier
+            - engine (str): "abm" or "fm"
             - total_simulations (int): number of simulations in the job
             - status_summary (dict): count by status, e.g.
               ``{"running": 2, "completed": 8}``
             - is_complete (bool): True once every simulation has finished
             - has_errors (bool): True if any simulation failed
             - simulations (list of dict): per-simulation status, each with
-              ``sim_id`` (str), ``status`` (str, one of queued / running /
-              completed / error), ``error_message`` (str), ``symbol_id`` (str)
-              and ``timestamp`` (str)
+              ``sim_id`` (str), ``status`` (str), ``error_message`` (str),
+              ``symbol_id`` (str) and ``timestamp`` (str). A finished run is
+              "complete" (older jobs: "completed"), a failed one "error" or
+              "failed"; anything else is still in flight.
+            - status, message, detail (str): FM jobs only, the inference
+              pod's own state, e.g. waiting for a GPU. Present only when the
+              orchestrator reports them.
 
         Raises
         ------
@@ -615,7 +639,8 @@ class SimulationResource:
             - completed (int): how many have finished
             - simulations (list of dict): per-simulation results, each with
               ``sim_id`` (str), ``status`` (str), ``available_files`` (list of
-              str), ``params`` (dict) and ``metrics`` (dict)
+              str), ``params`` (dict) and ``metrics`` (dict). A simulation
+              whose results could not be read carries ``error`` (str) instead.
 
         Raises
         ------
@@ -701,6 +726,9 @@ class SimulationResource:
         horizon_mins: int = 60,
         strategy: str = "vwap",
         side: str = None,
+        start_time: str | None = None,
+        scenario: str | None = None,
+        scenario_params: dict | None = None,
     ):
         """Run a liquidity-risk grid: market impact across a ladder of order sizes.
 
@@ -731,6 +759,13 @@ class SimulationResource:
             "vwap" or "twap" (default "vwap")
         side : str, optional
             "buy" or "sell"; defaults to the sign of each order size
+        start_time : str, optional
+            When the algos start, "HH:MM"; defaults to the market open.
+        scenario : str, optional
+            Market scenario every arm runs under, as on :meth:`run`; the
+            API's default is "normal".
+        scenario_params : dict, optional
+            Overrides for ``scenario``, validated as on :meth:`run`.
 
         Returns
         -------
@@ -742,9 +777,9 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier (403); if ``order_sizes`` is empty,
-            ``strategy`` is not "vwap" or "twap", or the symbol has no
-            calibration for ``cal_date`` (400).
+            If the key is not pro tier (403). If ``order_sizes`` is empty or
+            contains 0, ``strategy`` is not "vwap" or "twap", ``side`` is not
+            "buy" or "sell", or ``scenario_params`` fails validation (422).
 
         See Also
         --------
@@ -754,8 +789,8 @@ class SimulationResource:
 
         Notes
         -----
-        ``order_sizes`` is in **lots**, not shares — unlike ``order_size`` on
-        :meth:`run`, which is in shares. Sizes are unsigned here; direction
+        ``order_sizes`` is in **lots**, as is ``order_size`` on :meth:`run`.
+        Sizes are unsigned here; direction
         comes from ``side``, or from the sign of each entry when ``side`` is
         omitted.
 
@@ -803,8 +838,12 @@ class SimulationResource:
             "horizon_mins": horizon_mins,
             "strategy": strategy,
         }
-        if side is not None:
-            payload["side"] = side
+        for name, value in (
+            ("side", side), ("start_time", start_time),
+            ("scenario", scenario), ("scenario_params", scenario_params),
+        ):
+            if value is not None:
+                payload[name] = value
         return self._pro_request("POST", LRM_PATH, json=payload)
 
     def list_sim_files(self, sim_id: str):
@@ -998,14 +1037,8 @@ class SimulationResource:
         import polars as pl
         
         url = f"{self._client.base_url}{RESULTS_PATH}/{sim_id}/data/{filename}"
-        response = self._client.session.get(url)
-
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except ValueError:
-                detail = response.text
-            raise PulseAPIError(response.status_code, detail)
+        # Through the client, for its timeout, retries and error handling.
+        response = self._client._request_with_retries("GET", url)
 
         return pl.read_parquet(io.BytesIO(response.content))
 
@@ -1155,14 +1188,7 @@ class SimulationResource:
         ...         print(f"{name}: {df.shape}")
         """
         url = f"{self._client.base_url}{SAMPLE_PATH}"
-        response = self._client.session.get(url)
-
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except ValueError:
-                detail = response.text
-            raise PulseAPIError(response.status_code, detail)
+        response = self._client._request_with_retries("GET", url)
 
         if path is None:
             return response.content
@@ -1261,13 +1287,6 @@ class SimulationResource:
         }
         
         url = f"{self._client.base_url}{RESULTS_PATH}/bulk"
-        response = self._client.session.post(url, json=payload)
-
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except ValueError:
-                detail = response.text
-            raise PulseAPIError(response.status_code, detail)
+        response = self._client._request_with_retries("POST", url, json=payload)
 
         return response.content
