@@ -205,7 +205,6 @@ the user guide is at https://pulse.simudyne.com/docs.
 | `client.validation` | `run`, `get_job_status`, `get_job`, `list_jobs` — results carry `errors` per failed area |
 | `client.fm` | `models`, `live`; admin: `registry`, `register`, `activate`, `deactivate` |
 | `client.fix` | FIX session usage |
-| `client.simulator_gym` | the interactive simulator websocket |
 
 Failures raise `PulseAPIError` with `status_code`, `detail` (exactly as the
 API sent it) and `errors`; `str(exc)` renders validation errors as
