@@ -118,8 +118,8 @@ class FmResource:
         -------
         dict
             ``{env, models}``: the environment, and the latest row per model
-            with the fields :meth:`models` returns plus ``image``, ``active``
-            and ``updated_by``.
+            with the fields :meth:`models` returns plus ``active`` and
+            ``updated_by``. The container image is not returned.
 
         Raises
         ------

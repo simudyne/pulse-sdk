@@ -1,7 +1,37 @@
 # CHANGELOG
 
 
-## v0.8.0 (2026-10-01)
+## v0.8.0-dev.3 (2026-10-02)
+
+### Features
+
+- **sdk**: Remove the simulator_gym resource
+  ([`ac546b3`](https://github.com/simudyne/pulse-sdk/commit/ac546b38f6095c9631bc4eebbe5865b098eccead))
+
+- Drop client.simulator_gym (SimulatorGymResource and GymSession) and its tests; the gym is being
+  retired, starting with the SDK - Drop the websocket-client dependency, which only the gym used -
+  README resource table and the api-sync checklist no longer list it
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+
+## v0.8.0-dev.2 (2026-10-01)
+
+### Bug Fixes
+
+- **docs**: No side in scenario_params, and no image from the registry
+  ([`09c65a6`](https://github.com/simudyne/pulse-sdk/commit/09c65a6776be5873d0f7ab17bc16eb1b8538bc54))
+
+- Scenarios set their own direction (flash_crash, gradual_selloff, trending_down sell; buy_panic,
+  trending_up buy); pulse-api-pod now rejects scenario_params.side, so the docstring no longer
+  offers it - fm.registry() says the container image is not returned, matching the API, which strips
+  it from both model listings
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
 
 
 ## v0.8.0-dev.1 (2026-10-01)

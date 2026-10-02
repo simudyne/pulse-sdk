@@ -61,11 +61,11 @@ class TestRunSendsWhatTheCallerSet:
     def test_scenario_on_fm_run_is_sent_for_the_api_to_reject(self):
         client = FakeClient()
         SimulationResource(client).run(
-            engine="fm", model_id="m", scenario="flash_crash", scenario_params={"side": "buy"}
+            engine="fm", model_id="m", scenario="flash_crash", scenario_params={"impact_multiplier": 2.0}
         )
         body = _sent(client)
         assert body["scenario"] == "flash_crash"
-        assert body["scenario_params"] == {"side": "buy"}
+        assert body["scenario_params"] == {"impact_multiplier": 2.0}
 
 
 class TestLrm:

@@ -55,8 +55,6 @@ class PulseABM:
         Foundation-model generation and its job lifecycle.
     fix : FixResource
         FIX gateway usage.
-    simulator_gym : SimulatorGymResource
-        Gym-style reinforcement-learning environment over a WebSocket.
 
     Raises
     ------
@@ -109,7 +107,6 @@ class PulseABM:
         from simudyne.resources.fix import FixResource
         from simudyne.resources.fm import FmResource
         from simudyne.resources.simulation import SimulationResource
-        from simudyne.resources.simulator_gym import SimulatorGymResource
         from simudyne.resources.validation import ValidationResource
 
         self.profile = ProfileResource(self)
@@ -118,7 +115,6 @@ class PulseABM:
         self.fix = FixResource(self)
         self.fm = FmResource(self)
         self.simulation = SimulationResource(self)
-        self.simulator_gym = SimulatorGymResource(self)
         self.validation = ValidationResource(self)
 
     def _request_with_retries(self, method: str, url: str, **kwargs):
