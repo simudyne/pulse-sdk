@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.1 (2026-10-02)
+
+### Bug Fixes
+
+- **release**: Merge prod 0.8.0 into dev before promoting
+  ([`8b75f47`](https://github.com/simudyne/pulse-sdk/commit/8b75f4779ecfd23065fde4842219cd253e56ba3d))
+
+Only the version line and CHANGELOG conflicted; both keep dev's, since semantic-release derives
+  versions from tags. With v0.8.0 reachable from dev, the promotion merges cleanly and the next
+  stable cut is above 0.8.0.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01L28mvB6kWYprwSiCiQCnUC
+
+
+## v0.8.0 (2026-10-01)
+
+
 ## v0.8.0-dev.3 (2026-10-02)
 
 ### Features
