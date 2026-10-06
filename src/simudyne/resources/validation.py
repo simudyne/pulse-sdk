@@ -70,10 +70,13 @@ _AREA_FLAGS = (
 )
 
 #: ``lob`` marks the frames as L2 snapshots, which switches off anything
-#: needing the message stream; ``sample_period`` and ``match_generated_sample``
-#: set the grid the book is resampled onto; ``plots`` is False, True, or a list
-#: of plot ids.
-_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots")
+#: needing the message stream; ``resample_method`` and ``sessions`` say how the
+#: historical day is put onto the generated frames' grid; ``plots`` is False,
+#: True, or a list of plot ids.
+_EXTRA_FIELDS = ("lob", "resample_method", "sessions", "plots")
+
+#: How the historical day can be put onto the generated grid in lob mode.
+RESAMPLE_METHODS = ("last", "pulseflow")
 
 
 def _frame_to_parquet(entry, index: int):
@@ -257,8 +260,8 @@ class ValidationResource:
         fid=None,
         mind=None,
         lob=None,
-        sample_period=None,
-        match_generated_sample=None,
+        resample_method=None,
+        sessions=None,
         n_levels: int = 10,
         plots=None,
     ) -> dict:
@@ -318,15 +321,22 @@ class ValidationResource:
         lob : bool, optional
             The frames are L2 snapshots. Anything needing the message stream
             is skipped, with the reason reported in
-            ``metadata["areas_skipped"]``.
-        sample_period : str, optional
-            The grid the book is resampled onto in lob mode, e.g. ``"1s"``.
-            Omitted, the cadence is read off your generated frames; if those
-            are event-level there is no grid to match and nothing is
-            resampled.
-        match_generated_sample : bool, optional
-            Match the generated frames' grid even when ``sample_period`` is
-            given.
+            ``metadata["areas_skipped"]``. The historical day is resampled
+            onto your generated frames' own grid, read off them (e.g. one
+            second); event-level frames are left as they are.
+        resample_method : {"last", "pulseflow"}, optional
+            How the historical day is put onto that grid in lob mode.
+            ``"last"`` (the default when unset) keeps the last event in each
+            interval. ``"pulseflow"`` reproduces PulseFLOW's training-data
+            preprocessing exactly — the first event per interval on a fixed
+            session grid, forward-filled to the session edges, sizes clipped
+            at each session's 99th percentile — so a PulseFLOW run is scored
+            against the data it was trained on. Needs ``sessions``.
+        sessions : list of [start_h, start_m, end_h, end_m], optional
+            The model's trading sessions, for ``resample_method="pulseflow"``
+            only; the end is exclusive. ``[[8, 0, 16, 30]]`` for LSE
+            continuous trading, ``[[9, 30, 12, 0], [13, 0, 16, 0]]`` for
+            HKEX.
         n_levels : int, default 10
             Book levels to measure over.
         plots : bool or list of str, optional
@@ -408,14 +418,16 @@ class ValidationResource:
         ...     plots=["statistical.radar", "stylised_facts.overall"],
         ... )
 
-        L2 snapshots resampled onto a one-second grid:
+        A PulseFLOW run on its one-second grid, scored against the historical
+        day downsampled exactly as PulseFLOW's training data was:
 
         >>> job = client.validation.run(
         ...     symbol="BARC", date="2025-09-02",
         ...     provider="bmll", exchange="lse",
-        ...     sim_files=["book_snapshots.parquet"],
+        ...     sim_files=["pulseflow_sample.parquet"],
         ...     lob=True,
-        ...     sample_period="1s",
+        ...     resample_method="pulseflow",
+        ...     sessions=[[8, 0, 16, 30]],
         ... )
         """
         if sim_ids is None and sim_files is None:
@@ -433,6 +445,14 @@ class ValidationResource:
             )
         if n_levels < 1:
             raise ValueError("n_levels must be at least 1")
+        if resample_method is not None and resample_method not in RESAMPLE_METHODS:
+            raise ValueError(f"resample_method must be one of {RESAMPLE_METHODS}")
+        if resample_method == "pulseflow" and not sessions:
+            raise ValueError(
+                "resample_method='pulseflow' needs sessions, e.g. [[8, 0, 16, 30]]"
+            )
+        if sessions and resample_method != "pulseflow":
+            raise ValueError("sessions only applies with resample_method='pulseflow'")
 
         config = _build_config(
             n_levels,
@@ -443,8 +463,8 @@ class ValidationResource:
             fid=fid,
             mind=mind,
             lob=lob,
-            sample_period=sample_period,
-            match_generated_sample=match_generated_sample,
+            resample_method=resample_method,
+            sessions=sessions,
             plots=plots,
         )
 

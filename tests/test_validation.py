@@ -106,13 +106,41 @@ class TestMetricFlags:
         "flag,value",
         [("statistical", False), ("stylised_facts", True), ("impact", False),
          ("volume_correlation", True), ("fid", False), ("mind", True),
-         ("lob", True), ("sample_period", "100ms"),
-         ("match_generated_sample", True),
+         ("lob", True), ("resample_method", "last"),
          ("plots", ["statistical.radar"])],
     )
     def test_explicit_options_are_forwarded(self, flag, value):
         client, _ = _run([{"job_id": "v1"}], **{flag: value})
         assert client.calls[0][2]["json"]["config"][flag] == value
+
+    def test_pulseflow_resampling_is_forwarded_with_its_sessions(self):
+        client, _ = _run([{"job_id": "v1"}], lob=True, resample_method="pulseflow",
+                         sessions=[[8, 0, 16, 30]])
+        config = client.calls[0][2]["json"]["config"]
+        assert config["resample_method"] == "pulseflow"
+        assert config["sessions"] == [[8, 0, 16, 30]]
+
+    @pytest.mark.parametrize(
+        "kwargs,match",
+        [({"resample_method": "mean"}, "resample_method must be one of"),
+         ({"resample_method": "pulseflow"}, "needs sessions"),
+         ({"sessions": [[8, 0, 16, 30]]}, "only applies"),
+         ({"resample_method": "last", "sessions": [[8, 0, 16, 30]]}, "only applies")],
+    )
+    def test_bad_resampling_is_refused_before_any_request(self, kwargs, match):
+        client = FakeClient()
+        with pytest.raises(ValueError, match=match):
+            ValidationResource(client).run(sim_ids=SIM_IDS, **IDENTITY, **kwargs)
+        assert client.calls == []
+
+    def test_the_old_grid_options_are_gone(self):
+        """Replaced by resample_method: in lob mode the grid is read off the
+        generated frames."""
+        for dead in ("sample_period", "match_generated_sample"):
+            with pytest.raises(TypeError):
+                ValidationResource(FakeClient()).run(
+                    sim_ids=SIM_IDS, **IDENTITY, **{dead: "1s"}
+                )
 
     def test_the_legacy_aliases_are_gone(self):
         """run_* and l2_only/plot_data were two names for one thing."""
