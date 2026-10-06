@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.2 (2026-10-06)
+
+### Features
+
+- **sdk**: Resample_method and sessions replace sample_period and match_generated_sample
+  ([`6a63873`](https://github.com/simudyne/pulse-sdk/commit/6a63873f1467476b427ae728016c3785547a427f))
+
+Matches pulse-api-pod's ValidationConfig. validation.run() takes resample_method ("last" or
+  "pulseflow") and sessions ([[start_h, start_m, end_h, end_m], ...], end exclusive). "pulseflow"
+  puts the historical day on PulseFLOW's own training grid (pulse-check >= 1.24.1), so a PulseFLOW
+  run is scored against the data it was trained on; it needs sessions, and sessions are refused
+  without it, before any request is made.
+
+sample_period and match_generated_sample are removed, as the API now rejects them: in lob mode the
+  grid is read off the generated frames.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v0.9.0-dev.1 (2026-10-02)
 
 ### Bug Fixes
