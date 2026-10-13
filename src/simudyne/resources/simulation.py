@@ -310,8 +310,9 @@ class SimulationResource:
 
             If a backing service cannot be reached: the model registry
             (pulse-orchestrator) for an FM run or for resolving ``model_id``
-            (502), or the simulation service (503). Both are retried
-            automatically before the error is raised.
+            (502), or the simulation service (503). A 503 is retried
+            automatically; a 502 is not, because the job may already have
+            been queued — check :meth:`get_jobs` before submitting again.
 
         See Also
         --------
@@ -1050,10 +1051,8 @@ class SimulationResource:
         PulseAPIError
             If ``filename`` is not one of the six names above (400);
             ``sim_id`` is unknown, or the file was not written by this run
-            (404); or the free-tier download allowance is exhausted (429).
-            A 429 is treated as transient and retried with backoff (1 s,
-            2 s, 4 s with the default ``max_retries``, about 7 s in all)
-            before it is raised.
+            (404); or the free-tier download allowance is exhausted (429,
+            raised at once: the allowance rolls over in hours, not seconds).
 
         See Also
         --------
@@ -1279,8 +1278,8 @@ class SimulationResource:
             ``include_*`` flag is False (400); any ``sim_id`` is unknown or
             belongs to another account and is not in the cached library, or
             none of the requested files exist (404); or the free-tier
-            download allowance would be exceeded (429, retried for about 7 s
-            before it is raised, as on :meth:`get_sim_data`).
+            download allowance would be exceeded (429, raised at once, as on
+            :meth:`get_sim_data`).
 
         See Also
         --------
@@ -1346,6 +1345,10 @@ class SimulationResource:
         }
         
         url = f"{self._client.base_url}{RESULTS_PATH}/bulk"
-        response = self._client._request_with_retries("POST", url, json=payload)
+        # A read sent as POST for its body: safe to retry, and re-fetching
+        # groups already downloaded is never charged again.
+        response = self._client._request_with_retries(
+            "POST", url, json=payload, idempotent=True
+        )
 
         return response.content

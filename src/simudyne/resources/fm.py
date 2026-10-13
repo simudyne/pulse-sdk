@@ -154,6 +154,7 @@ class FmResource:
         supported_data: list | None = None,
         min_prompt_rows: int | None = None,
         production_name: str = "",
+        testdata: dict | None = None,
         active: bool = True,
     ):
         """Admin: register a model image, or a new version of one.
@@ -184,6 +185,11 @@ class FmResource:
             Context rows it needs to start inference.
         production_name : str, default ""
             The name to promote it under, ``{model}-{market}-{version}-{size}``.
+        testdata : dict, optional
+            The real day baked into the image as its test data,
+            ``{"provider", "exchange", "symbol", "date"}``. Test-data runs are
+            minted under that day, so their sim_ids name it instead of
+            ``na:na:testdata:na``.
         active : bool, default True
             Whether :meth:`models` lists it.
 
@@ -208,11 +214,6 @@ class FmResource:
         registry : What is registered now.
         deactivate : Withdraw a model.
 
-        Notes
-        -----
-        The API also accepts a ``testdata`` field (the real day baked into
-        the image as its test data); the SDK does not expose it.
-
         Examples
         --------
         >>> client.fm.register(
@@ -232,6 +233,7 @@ class FmResource:
         for name, value in (
             ("resources", resources), ("model_args", model_args),
             ("supported_data", supported_data), ("min_prompt_rows", min_prompt_rows),
+            ("testdata", testdata),
         ):
             if value is not None:
                 payload[name] = value

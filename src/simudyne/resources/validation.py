@@ -117,6 +117,22 @@ def _frame_to_parquet(entry, index: int):
     return path.name, path.read_bytes()
 
 
+def _materialise(sims):
+    """A mapping's group values as lists; anything else as it came.
+
+    Strings and non-iterables are left for :func:`_check_groups` to reject
+    with its own message.
+    """
+    if not isinstance(sims, dict):
+        return sims
+    return {
+        name: list(runs)
+        if isinstance(runs, Iterable) and not isinstance(runs, (str, bytes))
+        else runs
+        for name, runs in sims.items()
+    }
+
+
 def _count(sims) -> int:
     """How many runs this argument names, mapping or list."""
     if sims is None:
@@ -489,6 +505,10 @@ class ValidationResource:
         """
         if sim_ids is None and sim_files is None:
             raise ValueError("Pass sim_ids, sim_files, or both")
+        # Read every group once, up front: a generator passed as a group's
+        # runs used to be exhausted by the count and then sent empty.
+        sim_ids = _materialise(sim_ids)
+        sim_files = _materialise(sim_files)
         if sim_ids is not None and not sim_ids:
             raise ValueError("sim_ids must not be empty")
         if sim_files is not None and not sim_files:
@@ -688,7 +708,11 @@ class ValidationResource:
         {'fm': [0.142, 0.151], 'abm': [0.318, None]}
         """
         job = self._client._request("GET", f"{JOBS_PATH}/{job_id}")
-        if (job or {}).get("plots"):
+        # The API always sends a plots object, one key per category, empty
+        # until something is drawn. Testing the object itself was always true,
+        # so every poll created plot_dir and returned plot_paths: [].
+        plots = (job or {}).get("plots")
+        if isinstance(plots, dict) and any(plots.values()):
             job["plot_paths"] = _save_plots(job, plot_dir)
         return job
 

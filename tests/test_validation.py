@@ -248,6 +248,36 @@ class TestOneEntryPoint:
         assert client.calls[1][2]["params"] == {"limit": 5, "offset": 0}
 
 
+class TestGetJobOnlyWritesWhatWasDrawn:
+    """The API always sends a plots object with one empty list per category."""
+
+    EMPTY = {"distributions": [], "distances": [], "impact_response": [],
+             "stylised_facts": [], "volume_correlation": []}
+
+    def test_no_figures_writes_nothing(self, tmp_path):
+        target = tmp_path / "figs"
+        client = FakeClient([{"job_id": "v1", "status": "running",
+                              "plots": dict(self.EMPTY)}])
+        job = ValidationResource(client).get_job("v1", plot_dir=target)
+        assert "plot_paths" not in job
+        assert not target.exists()
+
+    def test_figures_are_written(self, tmp_path):
+        plots = dict(self.EMPTY, distances=[
+            {"id": "statistical.radar", "name": "radar", "content_base64": PNG}])
+        client = FakeClient([{"job_id": "v1", "status": "completed", "plots": plots}])
+        job = ValidationResource(client).get_job("v1", plot_dir=tmp_path)
+        assert len(job["plot_paths"]) == 1
+
+
+class TestGeneratorGroups:
+    def test_a_generator_group_is_sent_in_full(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_ids={"abm": (i for i in SIM_IDS)}, **IDENTITY)
+        assert client.calls[0][2]["json"]["sim_ids"] == {"abm": SIM_IDS}
+
+
 class TestSimulatedFrameShapes:
     """sim_files takes a path, a (name, bytes) pair, or a DataFrame."""
 
