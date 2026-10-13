@@ -108,9 +108,11 @@ class DataResource:
         Raises
         ------
         PulseAPIError
-            If the key is not pro or demo tier (403), ``model_id`` names a
-            model that is not registered (404), or ``date`` is not
-            ``YYYY-MM-DD`` (422).
+            If the key is not pro or demo tier (403); ``model_id`` names a
+            model that is not registered (404) or matches more than one
+            (400); ``date`` is not ``YYYY-MM-DD``, ``limit`` is outside
+            1-200 or ``offset`` is negative (422); or, with ``model_id``, the
+            model registry (pulse-orchestrator) could not be reached (502).
 
         See Also
         --------
@@ -189,8 +191,8 @@ class DataResource:
         q : str, optional
             Case-insensitive substring match over ticker and company name.
         limit : int, optional
-            Max instruments to return. Omitted, the whole calibrated catalogue
-            comes back — it is far smaller than the registry.
+            Max instruments to return, 1-1000. Omitted, the whole calibrated
+            catalogue comes back — it is far smaller than the registry.
         offset : int, optional
             Instruments to skip, for paging alongside ``limit``.
 
@@ -215,8 +217,9 @@ class DataResource:
         Raises
         ------
         PulseAPIError
-            If a filter is malformed — most often ``date`` not in
-            ``YYYY-MM-DD`` form (422).
+            If ``limit`` is outside 1-1000 or ``offset`` is negative (422).
+            Available on every tier. A malformed ``date`` is not rejected:
+            it simply matches nothing, and ``total`` comes back 0.
 
         See Also
         --------
@@ -274,7 +277,7 @@ class DataResource:
         :meth:`available_data` and its output is an entry in
         :meth:`calibrated_data`. It runs asynchronously — the call returns once
         the job is queued, and the day appears in :meth:`calibrated_data` when
-        the pipeline finishes.
+        the pipeline finishes. Demo tier only.
 
         A symbol is identified by four fields: ``provider``, ``exchange``,
         ``symbol`` and ``cal_date``.
@@ -299,14 +302,25 @@ class DataResource:
         Returns
         -------
         dict
-            Calibration job submission result, containing the job identifier
-            and its accepted status.
+            status : str
+                "calibration_queued".
+            symbol : str
+                The symbol as submitted.
+            cal_date : str
+                The date as submitted.
+
+            There is no job id: progress is not pollable through the API.
+            Watch :meth:`calibrated_data` for the day to appear.
 
         Raises
         ------
         PulseAPIError
-            If the key is not demo tier (403), or there is no raw market data
-            for the symbol on ``cal_date`` (400).
+            If the key is not demo tier (403), ``provider`` or ``exchange``
+            is not a recognised value (422), or the calibration service is
+            unreachable (503). Missing raw market data for the symbol-day is
+            not detected here: the job is queued and fails later in the
+            pipeline, so the day simply never appears in
+            :meth:`calibrated_data`.
 
         See Also
         --------
@@ -324,17 +338,19 @@ class DataResource:
         Examples
         --------
         >>> job = client.data.calibrate(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
+        ...     symbol="700.HK",
+        ...     cal_date="2025-09-02",
         ...     provider="omd",
         ...     exchange="hkex_securities",
         ... )
+        >>> job["status"]
+        'calibration_queued'
 
         With an explicit budget, and adjustment-parameter optimisation off:
 
         >>> job = client.data.calibrate(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
+        ...     symbol="700.HK",
+        ...     cal_date="2025-09-02",
         ...     provider="omd",
         ...     exchange="hkex_securities",
         ...     simulations=500,

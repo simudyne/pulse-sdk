@@ -70,7 +70,13 @@ class ProfileResource:
         """Return your request count for the current calendar month.
 
         Resets on the 1st, and counts *requests* rather than simulations —
-        one ``run()`` of 100 Monte Carlo runs is a single request here.
+        one ``run()`` of 100 Monte Carlo runs is a single request here. Only
+        the routes that log usage are counted: the data routes, the
+        simulation routes (run, LRM run, jobs and their status, results and
+        logs, per-sim files, params, metrics and data, bulk download, cached
+        and sample), validation ``run`` and ``run/upload``, FM ``live`` and
+        the historical routes. Profile, API-key, validation job reads, FM
+        model management and FIX usage calls are not counted.
 
         Returns
         -------
@@ -82,10 +88,10 @@ class ProfileResource:
             total_requests : int
                 Requests so far this month.
             by_endpoint : dict
-                Request count keyed by endpoint path. The keys are the
-                concrete paths that were called, so a job-scoped endpoint
-                appears once per job id rather than as a template — aggregate
-                by prefix if you want per-endpoint totals.
+                Request count keyed by route label. Job- and sim-scoped
+                routes are logged under their template, e.g.
+                ``"/simulation/jobs/{job_id}/status"``, not once per concrete
+                job id, so each key is already a per-endpoint total.
 
         Raises
         ------
@@ -102,12 +108,13 @@ class ProfileResource:
         >>> usage = client.profile.usage()
         >>> print(f"{usage['month']}: {usage['total_requests']} requests")
 
-        Aggregate the per-path counts back into per-endpoint totals:
+        Roll the per-route counts up into per-area totals:
 
         >>> from collections import Counter
         >>> totals = Counter()
-        >>> for path, count in usage["by_endpoint"].items():
-        ...     totals[path.split("/")[1]] += count
+        >>> for route, count in usage["by_endpoint"].items():
+        ...     totals[route.split("/")[1]] += count
+        >>> print(totals.most_common())
         """
         return self._client._request("GET", "/profile/usage")
 
@@ -134,7 +141,14 @@ class ProfileResource:
             downloaded_groups : list of str or None
                 Every group you have ever downloaded. None when unlimited.
             downloaded_group_details : list of dict or None
-                The same groups, each with a ``downloaded_at`` timestamp.
+                The same groups, newest first, each a dict with
+                ``job_key`` (str, the group, as in ``downloaded_groups``)
+                and ``downloaded_at`` (ISO timestamp str, or None).
+
+        Raises
+        ------
+        PulseAPIError
+            If the key is invalid, revoked or expired — status 401.
 
         See Also
         --------
@@ -146,11 +160,6 @@ class ProfileResource:
         -----
         A request that would exceed the allowance returns HTTP 429 without
         charging anything, so a partial download never silently eats quota.
-
-        Raises
-        ------
-        PulseAPIError
-            If the key is invalid, revoked or expired — status 401.
 
         Examples
         --------

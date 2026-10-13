@@ -90,7 +90,8 @@ class SimulationResource:
     It also reads back foundation-model output, since an FM run writes with the
     same conventions — only the ``gen_method`` on the sim differs.
 
-    Running a simulation requires a pro-tier key. :meth:`list_cached` and
+    Running a simulation, and reading jobs, requires a pro- or demo-tier key.
+    :meth:`list_cached` and
     :meth:`get_sample_data` are available on every tier.
 
     Examples
@@ -99,8 +100,8 @@ class SimulationResource:
 
     >>> import time
     >>> result = client.simulation.run(
-    ...     symbol="9999.HK",
-    ...     cal_date="2025-09-01",
+    ...     symbol="700.HK",
+    ...     cal_date="2025-09-02",
     ...     provider="omd",
     ...     exchange="hkex_securities",
     ...     n_runs=10,
@@ -272,7 +273,14 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier (403).
+            If the key is not pro or demo tier (403).
+
+            If the request itself is malformed (422): ``provider`` or
+            ``exchange`` is not a recognised value; ``n_runs`` is below 1, or
+            above 8 with ``engine="fm"``; ``engine="fm"`` without
+            ``model_id``; or an ``exec_algos`` entry has a ``start_time``
+            that is not "HH:MM" / "HH:MM:SS" or a ``side`` that is not "buy"
+            or "sell".
 
             If the named data is unusable (422). The market identity is checked
             against the catalogue before submission:
@@ -300,6 +308,11 @@ class SimulationResource:
 
             If ``model_id`` matches more than one model (400) or none (404).
 
+            If a backing service cannot be reached: the model registry
+            (pulse-orchestrator) for an FM run or for resolving ``model_id``
+            (502), or the simulation service (503). Both are retried
+            automatically before the error is raised.
+
         See Also
         --------
         get_job_status : Poll a submitted job, either engine.
@@ -315,7 +328,7 @@ class SimulationResource:
         An agent-based run:
 
         >>> job = client.simulation.run(
-        ...     symbol="700.HK", cal_date="2025-09-01",
+        ...     symbol="700.HK", cal_date="2025-09-02",
         ...     provider="omd", exchange="hkex_securities",
         ...     n_runs=10, scenario="flash_crash",
         ... )
@@ -336,7 +349,7 @@ class SimulationResource:
         An execution algorithm, on either engine:
 
         >>> job = client.simulation.run(
-        ...     symbol="9999.HK", cal_date="2025-09-01",
+        ...     symbol="700.HK", cal_date="2025-09-02",
         ...     provider="omd", exchange="hkex_securities",
         ...     n_runs=20,
         ...     exec_algos=[{
@@ -431,7 +444,7 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier (403), or ``limit`` or ``offset`` is
+            If the key is not pro or demo tier (403), or ``limit`` or ``offset`` is
             out of range (422).
 
         See Also
@@ -493,7 +506,7 @@ class SimulationResource:
         ------
         PulseAPIError
             If ``job_id`` is unknown or belongs to another account (404), or
-            the key is not pro tier (403).
+            the key is not pro or demo tier (403).
 
         See Also
         --------
@@ -522,8 +535,8 @@ class SimulationResource:
 
         >>> import time
         >>> result = client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
+        ...     symbol="700.HK",
+        ...     cal_date="2025-09-02",
         ...     provider="omd",
         ...     exchange="hkex_securities",
         ...     n_runs=10,
@@ -536,7 +549,10 @@ class SimulationResource:
         ...         break
         ...     time.sleep(30)
         >>> if status["has_errors"]:
-        ...     failed = [s for s in status["simulations"] if s["status"] == "error"]
+        ...     failed = [
+        ...         s for s in status["simulations"]
+        ...         if s["status"] in ("error", "failed")
+        ...     ]
         ...     for sim in failed:
         ...         print(sim["sim_id"], sim["error_message"])
         """
@@ -552,15 +568,15 @@ class SimulationResource:
             Scenario names mapped to their descriptions. A copy, so mutating
             it does not affect later calls.
 
+        See Also
+        --------
+        get_scenario_defaults : The default parameters for one scenario.
+
         Notes
         -----
         Served from a constant in the SDK rather than from the API, so it
         needs no key, costs no request, and reflects the scenarios this SDK
         version knows about.
-
-        See Also
-        --------
-        get_scenario_defaults : The default parameters for one scenario.
 
         Examples
         --------
@@ -589,16 +605,16 @@ class SimulationResource:
             which injects nothing, and for any unknown name. A copy, so
             mutating it does not affect later calls.
 
+        See Also
+        --------
+        list_scenarios : Every scenario this SDK version knows about.
+
         Notes
         -----
         Served from a constant in the SDK rather than from the API, so it
         needs no key and costs no request. An unknown scenario returns ``{}``
         rather than raising — check against :meth:`list_scenarios` if you need
         to tell "no defaults" from "no such scenario".
-
-        See Also
-        --------
-        list_scenarios : Every scenario this SDK version knows about.
 
         Examples
         --------
@@ -611,8 +627,8 @@ class SimulationResource:
         >>> params = client.simulation.get_scenario_defaults("flash_crash")
         >>> params["start_time"] = "11:00:00"
         >>> client.simulation.run(
-        ...     symbol="9999.HK",
-        ...     cal_date="2025-09-01",
+        ...     symbol="700.HK",
+        ...     cal_date="2025-09-02",
         ...     provider="omd",
         ...     exchange="hkex_securities",
         ...     scenario="flash_crash",
@@ -648,7 +664,12 @@ class SimulationResource:
         ------
         PulseAPIError
             If ``job_id`` is unknown or belongs to another account (404), or
-            the key is not pro tier (403).
+            the key is not pro or demo tier (403).
+
+        See Also
+        --------
+        get_sim_data : The generated book for one simulation.
+        get_job_status : Poll a job without pulling its metrics.
 
         Notes
         -----
@@ -656,16 +677,12 @@ class SimulationResource:
         with their current ``status`` and no metrics, so ``completed`` against
         ``total_simulations`` is a progress reading in its own right.
 
-        See Also
-        --------
-        get_sim_data : The generated book for one simulation.
-        get_job_status : Poll a job without pulling its metrics.
-
         Examples
         --------
+        >>> job_id = client.simulation.get_jobs(limit=1)["jobs"][0]["job_id"]
         >>> results = client.simulation.get_job_results(job_id)
         >>> for sim in results["simulations"]:
-        ...     if sim["status"] == "completed":
+        ...     if sim["status"] in ("complete", "completed"):
         ...         print(f"{sim['sim_id']}: {sim['metrics']}")
 
         Pull the book for every simulation that finished:
@@ -673,7 +690,7 @@ class SimulationResource:
         >>> frames = [
         ...     client.simulation.get_sim_data(sim["sim_id"])
         ...     for sim in results["simulations"]
-        ...     if sim["status"] == "completed"
+        ...     if sim["status"] in ("complete", "completed")
         ... ]
         """
         return self._pro_request("GET", f"{JOBS_PATH}/{job_id}/results")
@@ -699,7 +716,7 @@ class SimulationResource:
         ------
         PulseAPIError
             404 when the job does not exist, is not yours, or
-            wrote no log.
+            wrote no log; 403 if the key is not pro or demo tier.
 
         See Also
         --------
@@ -707,6 +724,7 @@ class SimulationResource:
 
         Examples
         --------
+        >>> job_id = client.simulation.get_jobs(limit=1)["jobs"][0]["job_id"]
         >>> status = client.simulation.get_job_status(job_id)
         >>> if status["has_errors"]:
         ...     print(client.simulation.get_job_logs(job_id)[:2000])
@@ -772,16 +790,27 @@ class SimulationResource:
         Returns
         -------
         dict
-            Submission result containing ``job_id`` and the queued
-            ``sim_ids``, covering the shared baseline arm and one arm per
-            entry in ``order_sizes``.
+            job_id : str
+                Pass to :meth:`get_job_status` and :meth:`get_job_results`.
+            order_sizes : list of int
+                The ladder as submitted.
+            n_runs : int
+                Monte Carlo runs per arm.
+            total_jobs : int
+                Simulations queued, ``n_runs * (1 + len(order_sizes))``.
+
+            No ``sim_ids`` are returned; read them from
+            :meth:`get_job_status` once the job is queued.
 
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier (403). If ``order_sizes`` is empty or
-            contains 0, ``strategy`` is not "vwap" or "twap", ``side`` is not
-            "buy" or "sell", or ``scenario_params`` fails validation (422).
+            If the key is not pro or demo tier (403). If ``order_sizes`` is
+            empty or contains 0, ``strategy`` is not "vwap" or "twap",
+            ``side`` is not "buy" or "sell", ``provider`` or ``exchange`` is
+            not a recognised value, ``scenario_params`` fails validation, or
+            the symbol-day has not been calibrated (422). If the simulation
+            service is unreachable (503).
 
         See Also
         --------
@@ -791,18 +820,18 @@ class SimulationResource:
 
         Notes
         -----
-        ``order_sizes`` is in **lots**, as is ``order_size`` on :meth:`run`.
-        Sizes are unsigned here; direction
-        comes from ``side``, or from the sign of each entry when ``side`` is
-        omitted.
+        ``order_sizes`` is in **lots**, as is ``order_size`` on :meth:`run`,
+        and signed the same way: negative buys, positive sells, and 0 is
+        rejected. Passing ``side`` overrides the sign for every entry and
+        only each size's magnitude is used.
 
         Examples
         --------
         A five-rung ladder, costing ``50 * (1 + 5)`` = 300 simulations:
 
         >>> job = client.simulation.run_lrm(
-        ...     symbol="700",
-        ...     cal_date="2025-09-01",
+        ...     symbol="700.HK",
+        ...     cal_date="2025-09-02",
         ...     provider="omd",
         ...     exchange="hkex_securities",
         ...     order_sizes=[10, 50, 100, 500, 1000],
@@ -814,8 +843,8 @@ class SimulationResource:
         arm:
 
         >>> job = client.simulation.run_lrm(
-        ...     symbol="700",
-        ...     cal_date="2025-09-01",
+        ...     symbol="700.HK",
+        ...     cal_date="2025-09-02",
         ...     provider="omd",
         ...     exchange="hkex_securities",
         ...     order_sizes=[100, 200, 400],
@@ -869,12 +898,15 @@ class SimulationResource:
             - has_l2_by_second (bool): Whether l2_by_second.parquet exists
             - has_exec_schedule (bool): Whether exec_schedule.parquet exists
             - has_schedule_by_min (bool): Whether schedule_by_min.parquet exists
+            - has_exec_results (bool): Whether exec_results.parquet exists
 
         Raises
         ------
         PulseAPIError
-            If ``sim_id`` is unknown or belongs to another account — status
-            404.
+            If ``sim_id`` is unknown, or belongs to another account and is
+            not part of the shared cached library — status 404. Cached
+            baseline simulations (see :meth:`list_cached`) are readable by
+            every account.
 
         See Also
         --------
@@ -884,6 +916,7 @@ class SimulationResource:
 
         Examples
         --------
+        >>> sim_id = client.simulation.list_cached(symbol="700.HK")["simulations"][0]["example_sim_id"]
         >>> files = client.simulation.list_sim_files(sim_id)
         >>> print(f"Available: {files['files']}")
 
@@ -928,6 +961,7 @@ class SimulationResource:
 
         Examples
         --------
+        >>> sim_id = client.simulation.list_cached(symbol="700.HK")["simulations"][0]["example_sim_id"]
         >>> params = client.simulation.get_sim_params(sim_id)
         >>> scenario = params["scenario_params"]
         >>> print(f"Scenario: {scenario['scenario_name']}")
@@ -967,14 +1001,16 @@ class SimulationResource:
 
         Examples
         --------
+        >>> sim_id = client.simulation.list_cached(symbol="700.HK")["simulations"][0]["example_sim_id"]
         >>> metrics = client.simulation.get_sim_metrics(sim_id)
         >>> print(metrics)
 
         Compare one metric across every run in a job:
 
+        >>> job_id = client.simulation.get_jobs(limit=1)["jobs"][0]["job_id"]
         >>> status = client.simulation.get_job_status(job_id)
         >>> for sim in status["simulations"]:
-        ...     if sim["status"] == "completed":
+        ...     if sim["status"] in ("complete", "completed"):
         ...         m = client.simulation.get_sim_metrics(sim["sim_id"])
         ...         print(sim["sim_id"], m.get("mean_spread"))
         """
@@ -1012,8 +1048,12 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If ``sim_id`` is unknown or the file was not written by this run
-            (404), or the free-tier download allowance is exhausted (429).
+            If ``filename`` is not one of the six names above (400);
+            ``sim_id`` is unknown, or the file was not written by this run
+            (404); or the free-tier download allowance is exhausted (429).
+            A 429 is treated as transient and retried with backoff (1 s,
+            2 s, 4 s with the default ``max_retries``, about 7 s in all)
+            before it is raised.
 
         See Also
         --------
@@ -1022,6 +1062,7 @@ class SimulationResource:
 
         Examples
         --------
+        >>> sim_id = client.simulation.list_cached(symbol="700.HK")["simulations"][0]["example_sim_id"]
         >>> df = client.simulation.get_sim_data(sim_id)
         >>> print(df.shape)
         >>> print(df.head())
@@ -1072,14 +1113,17 @@ class SimulationResource:
             Contains:
             - simulations (list): List of cached simulation groups, each with:
             - example_sim_id (str): A sim_id from this group (use with get_sim_data)
+            - provider (str): Data provider, e.g. "omd"
+            - exchange (str): Exchange protocol, e.g. "hkex_securities"
             - symbol (str): Trading symbol
             - date (str): Calibration date
             - scenario (str): Scenario name
-            - n_runs (int): Number of available runs
+            - n_runs (int): Number of available runs, capped at 25
             - cal_hash (str): Calibration parameter hash
             - sim_hash (str): Simulation parameter hash
             - time_range (str): Trading time range
-            - total (int): Number of unique symbol/date/scenario combinations
+            - total (int): Number of unique provider/exchange/symbol/date/
+              scenario combinations
 
         Raises
         ------
@@ -1096,6 +1140,10 @@ class SimulationResource:
         Available on every tier, and the way onto the platform without running
         anything: pick a group here and read it with :meth:`get_sim_data`.
         Only baseline simulations are cached — nothing with an execution algo.
+
+        There is no ``provider`` or ``exchange`` filter, and groups are keyed
+        by market as well as symbol, so a symbol cached under two providers
+        appears twice; check ``provider`` and ``exchange`` on each group.
 
         Examples
         --------
@@ -1116,7 +1164,7 @@ class SimulationResource:
         Straight from a filtered group into a DataFrame:
 
         >>> cached = client.simulation.list_cached(
-        ...     symbol="9999.HK", scenario="flash_crash"
+        ...     symbol="700.HK", scenario="flash_crash"
         ... )
         >>> if cached["simulations"]:
         ...     groups = cached["simulations"]
@@ -1227,8 +1275,17 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If any ``sim_id`` is unknown or belongs to another account (404),
-            or the free-tier download allowance would be exceeded (429).
+            If ``sim_ids`` is empty, holds more than 100 ids, or every
+            ``include_*`` flag is False (400); any ``sim_id`` is unknown or
+            belongs to another account and is not in the cached library, or
+            none of the requested files exist (404); or the free-tier
+            download allowance would be exceeded (429, retried for about 7 s
+            before it is raised, as on :meth:`get_sim_data`).
+
+        See Also
+        --------
+        get_sim_data : One file from one simulation, as a DataFrame.
+        profile.downloads : Remaining free-tier allowance.
 
         Notes
         -----
@@ -1240,10 +1297,10 @@ class SimulationResource:
         HTTP 429 and charges nothing. Check with
         ``client.profile.downloads()``. Pro and demo tiers are unlimited.
 
-        See Also
-        --------
-        get_sim_data : One file from one simulation, as a DataFrame.
-        profile.downloads : Remaining free-tier allowance.
+        A requested file that does not exist for a simulation is left out,
+        and so is one that fails to read while the ZIP is being streamed:
+        both are skipped silently, with no error and no marker in the
+        archive. Compare the ZIP's contents against what you asked for.
 
         Examples
         --------
@@ -1258,7 +1315,7 @@ class SimulationResource:
         Add the per-second L2 book:
 
         >>> zip_bytes = client.simulation.get_bulk_data(
-        ...     sim_ids=["sim_id_1", "sim_id_2"],
+        ...     sim_ids=sim_ids[:2],
         ...     include_sim_data=True,
         ...     include_l2_by_second=True,
         ... )

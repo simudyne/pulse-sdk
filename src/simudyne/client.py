@@ -20,8 +20,13 @@ class PulseABM:
     keeps connections alive across calls.
 
     Transient failures (HTTP 429, 502, 503, 504) and network timeouts are
-    retried automatically with exponential backoff. Any other non-2xx response
-    raises :class:`~simudyne.exceptions.PulseAPIError`.
+    retried automatically with exponential backoff. Any other non-2xx response,
+    and a transient status that is still failing once the retries run out,
+    raises :class:`~simudyne.exceptions.PulseAPIError`. A timeout or
+    connection failure that outlasts the retries is not wrapped: it surfaces
+    as the underlying :class:`requests.Timeout` or
+    :class:`requests.ConnectionError`, so catch those alongside
+    ``PulseAPIError`` if you need to handle every failure.
 
     Parameters
     ----------

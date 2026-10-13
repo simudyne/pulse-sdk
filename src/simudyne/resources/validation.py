@@ -23,9 +23,14 @@ Selecting metrics
 -----------------
 One flag per metric — ``statistical``, ``stylised_facts``, ``impact``,
 ``volume_correlation``, ``fid``, ``mind``. Left as ``None`` each takes the
-default for your tier, resolved server-side, so naming none behaves exactly as
-your account is entitled to. Pass ``False`` to skip an expensive pass or
-``True`` to force one on.
+server's default, which is on for every area on every tier. Pass ``False`` to
+skip an expensive pass.
+
+Time window
+-----------
+``match_window`` chooses which stretch of the trading day is scored: ``False``
+(the default) the whole day, ``True`` the historical day cut to the runs' own
+span, ``["10:00", "10:30"]`` both sides cut to that interval.
 
 Tick size
 ---------
@@ -71,9 +76,10 @@ _AREA_FLAGS = (
 
 #: ``lob`` marks the frames as L2 snapshots, which switches off anything
 #: needing the message stream; ``resample_method`` and ``sessions`` say how the
-#: historical day is put onto the generated frames' grid; ``plots`` is False,
-#: True, or a list of plot ids.
-_EXTRA_FIELDS = ("lob", "resample_method", "sessions", "plots")
+#: historical day is put onto the generated frames' grid; ``match_window`` says
+#: which stretch of the day is scored; ``plots`` is False, True, or a list of
+#: plot ids.
+_EXTRA_FIELDS = ("lob", "resample_method", "sessions", "match_window", "plots")
 
 #: How the historical day can be put onto the generated grid in lob mode.
 RESAMPLE_METHODS = ("last", "pulseflow")
@@ -92,9 +98,9 @@ def _frame_to_parquet(entry, index: int):
     if isinstance(entry, tuple):
         return entry
 
-    # Duck-typed rather than imported: neither polars nor pandas is a hard
-    # dependency of the SDK, and importing one to test for the other would
-    # make it one.
+    # Duck-typed rather than imported: polars is a dependency of the SDK but
+    # pandas is not, and importing pandas to test for it would make it one.
+    # Checking both by attribute keeps the two paths symmetrical.
     writer = getattr(entry, "write_parquet", None)      # polars
     if writer is not None:
         buf = io.BytesIO()
@@ -262,6 +268,7 @@ class ValidationResource:
         lob=None,
         resample_method=None,
         sessions=None,
+        match_window=None,
         n_levels: int = 10,
         plots=None,
     ) -> dict:
@@ -317,7 +324,9 @@ class ValidationResource:
             Every population is pooled and averaged, and drawn as its own
             radar polygon, verdict-grid column and correlation heatmap.
         statistical, stylised_facts, impact, volume_correlation, fid, mind : bool, optional
-            Whether to run each area. ``None`` uses your tier's default.
+            Whether to run each area. ``None`` leaves it at the server's
+            default, which is on for every area and every tier; pass
+            ``False`` to skip one (``impact`` is the slowest).
         lob : bool, optional
             The frames are L2 snapshots. Anything needing the message stream
             is skipped, with the reason reported in
@@ -337,6 +346,26 @@ class ValidationResource:
             only; the end is exclusive. ``[[8, 0, 16, 30]]`` for LSE
             continuous trading, ``[[9, 30, 12, 0], [13, 0, 16, 0]]`` for
             HKEX.
+        match_window : bool or [str, str], optional
+            Which stretch of the trading day is scored, matched on time of
+            day (the generated frames need not carry the historical date).
+
+            - ``None`` or ``False`` (the default): the whole historical day.
+            - ``True``: the historical day is cut to the runs' own span, from
+              the earliest generated timestamp to the latest across every
+              run. Use it for a run shorter than the day, such as a
+              30-minute foundation-model rollout, which would otherwise be
+              compared with an opening, lunch and close it never simulated.
+            - ``[start, end]``: both the historical day and every run are cut
+              to that interval, ends inclusive. Each end is ``"HH:MM"``,
+              ``"HH:MM:SS"``, ``"HH:MM:SS.fff"`` or an ISO timestamp whose
+              time part is used, on the data's own clock with no timezone,
+              e.g. ``["10:00", "10:30"]``.
+
+            ``metadata["historical_window"]`` in the result reports what was
+            applied: ``mode`` (``"off"``, ``"simulation"`` or
+            ``"interval"``), ``start``, ``end`` and the row counts before and
+            after.
         n_levels : int, default 10
             Book levels to measure over.
         plots : bool or list of str, optional
@@ -367,22 +396,34 @@ class ValidationResource:
         Raises
         ------
         ValueError
-            If neither or both of ``sim_ids`` and ``sim_files`` are given,
-            either is empty, more than 25 runs are passed, or ``n_levels`` is
-            below 1. Also raised when a named population maps to a single
-            string or a non-iterable instead of a list of runs, when an
-            unknown option name is passed, and when the API accepts the
-            request but returns no ``job_id``.
+            If neither ``sim_ids`` nor ``sim_files`` is given, either is
+            empty, more than 25 runs are passed in total, ``n_levels`` is
+            below 1, ``resample_method`` is not one of
+            ``RESAMPLE_METHODS``, ``"pulseflow"`` comes without ``sessions``
+            (or ``sessions`` without it), or ``match_window`` is not a bool
+            or a two-item list. Also raised when a named population maps to a
+            single string or a non-iterable instead of a list of runs, and
+            when the API accepts the request but returns no ``job_id``.
         PulseAPIError
-            If the instrument has no historical data for ``date``, a
-            ``sim_id`` is unknown, or the tier does not allow a requested
-            area.
+            403 on the free tier. 422 when the API rejects the config — an
+            unreadable ``match_window`` interval or one that ends before it
+            starts, for example. 400 for a malformed upload or a ``sim_id``
+            that is not provider-qualified when ``provider`` and ``exchange``
+            cannot be read from it.
 
         See Also
         --------
         get_job_status : Poll the job without fetching its result.
         get_job : The result once the job completes.
         list_jobs : Earlier validation jobs.
+
+        Notes
+        -----
+        The request is accepted before anything is loaded. A historical day
+        that has no data, an unknown ``sim_id``, or a ``match_window``
+        interval that holds no rows of the day or of a run, all surface later
+        as ``status: "failed"`` with the reason in ``error``, not as an
+        exception here.
 
         Examples
         --------
@@ -416,6 +457,22 @@ class ValidationResource:
         ...     stylised_facts=True,
         ...     impact=False,
         ...     plots=["statistical.radar", "stylised_facts.overall"],
+        ... )
+
+        A 30-minute run scored against the same 30 minutes of the real day,
+        or both sides on an interval of your choosing:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_ids=["sim_abc"],
+        ...     match_window=True,
+        ... )
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_ids=["sim_abc"],
+        ...     match_window=["10:00", "10:30"],
         ... )
 
         A PulseFLOW run on its one-second grid, scored against the historical
@@ -453,6 +510,12 @@ class ValidationResource:
             )
         if sessions and resample_method != "pulseflow":
             raise ValueError("sessions only applies with resample_method='pulseflow'")
+        if match_window is not None and not isinstance(match_window, bool):
+            # The interval itself is read by the API, which answers a bad one
+            # with a 422 naming it; only the shape is checked here.
+            if not isinstance(match_window, (list, tuple)) or len(match_window) != 2:
+                raise ValueError("match_window must be True, False or [start, end]")
+            match_window = [str(end) for end in match_window]
 
         config = _build_config(
             n_levels,
@@ -465,6 +528,7 @@ class ValidationResource:
             lob=lob,
             resample_method=resample_method,
             sessions=sessions,
+            match_window=match_window,
             plots=plots,
         )
 
@@ -555,6 +619,19 @@ class ValidationResource:
             ``fid_scores``, ``mind_scores`` — enough to rebuild every figure —
             plus ``plot_paths`` when figures were written.
 
+            ``fid_scores`` and ``mind_scores`` are a list of float or None,
+            one per run in submission order (None where a run could not be
+            embedded). For a job over named populations they are instead a
+            dict of population name to such a list.
+
+            ``impact_response_error`` is ``"ExcType: message"`` when the
+            impact pass was asked for but failed, None otherwise.
+
+            ``plots`` stays in the returned dict as the API sent it:
+            ``{category: [{"id", "name", "content_base64"}, ...]}``, the
+            figures still base64-encoded. Writing them to disk does not
+            remove them.
+
             ``errors`` is ``{area: "ExcType: message"}`` for every area that
             was asked for but failed, or None when all of them ran. A
             completed job can carry it: one area failing does not fail the
@@ -572,7 +649,7 @@ class ValidationResource:
         ------
         PulseAPIError
             If ``job_id`` is unknown or belongs to another account — status
-            404.
+            404; 403 if the key is not pro or demo tier.
 
         See Also
         --------
@@ -581,6 +658,7 @@ class ValidationResource:
 
         Examples
         --------
+        >>> job_id = client.validation.list_jobs(limit=1)["jobs"][0]["job_id"]
         >>> result = client.validation.get_job(job_id)
         >>> result["status"]
         'running'
@@ -594,12 +672,20 @@ class ValidationResource:
         >>> if result.get("errors"):
         ...     print("areas that failed:", result["errors"])
         >>> print(result["plot_paths"])
-        ['figures/statistical.radar.png', 'figures/stylised_facts.overall.png']
+        ['figures/l1_distance_700.HK_2025-09-02.png', 'figures/wasserstein_distance_700.HK_2025-09-02.png']
 
-        With named populations, the scores come back keyed by name:
+        Each file is named after the figure's ``name``, not its plot id;
+        match a figure to the id you asked for through ``plots``:
+
+        >>> for category, figures in result["plots"].items():
+        ...     for fig in figures:
+        ...         print(fig["id"], "->", fig["name"] + ".png")
+
+        With named populations, the scores come back keyed by name, one
+        score per run:
 
         >>> result["fid_scores"]
-        {'fm': 0.142, 'abm': 0.318}
+        {'fm': [0.142, 0.151], 'abm': [0.318, None]}
         """
         job = self._client._request("GET", f"{JOBS_PATH}/{job_id}")
         if (job or {}).get("plots"):
@@ -629,7 +715,8 @@ class ValidationResource:
         Raises
         ------
         PulseAPIError
-            If the job does not exist or belongs to another key — status 404.
+            If the job does not exist or belongs to another account — status
+            404; 403 if the key is not pro or demo tier.
 
         See Also
         --------
@@ -639,6 +726,7 @@ class ValidationResource:
         Examples
         --------
         >>> import time
+        >>> job_id = client.validation.list_jobs(limit=1)["jobs"][0]["job_id"]
         >>> while not client.validation.get_job_status(job_id)["is_complete"]:
         ...     time.sleep(30)
         >>> result = client.validation.get_job(job_id, plot_dir="figures/")
@@ -661,12 +749,18 @@ class ValidationResource:
         dict
             ``{total, limit, offset, jobs}``. ``jobs`` is the page, newest
             first; ``total`` is your full job count rather than the page size,
-            so a caller can tell whether more pages exist.
+            so a caller can tell whether more pages exist. Each job is the
+            stored job record without its result: ``job_id``, ``status`` and
+            timestamps at the top level, and the submitted request under
+            ``params`` (so ``job["params"]["symbol"]``, not
+            ``job["symbol"]``).
 
         Raises
         ------
         PulseAPIError
-            If the key is invalid, revoked or expired — status 401.
+            If the key is not pro or demo tier (403), ``limit`` is outside
+            1-200 or ``offset`` is negative (422), or the key is invalid,
+            revoked or expired (401).
 
         See Also
         --------
@@ -677,7 +771,8 @@ class ValidationResource:
         --------
         >>> listing = client.validation.list_jobs(limit=10)
         >>> for job in listing["jobs"]:
-        ...     print(job["job_id"], job["status"], job["symbol"], job["date"])
+        ...     params = job.get("params") or {}
+        ...     print(job["job_id"], job["status"], params.get("symbol"), params.get("date"))
 
         Find the most recent completed job and read it back:
 

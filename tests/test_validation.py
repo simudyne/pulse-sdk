@@ -107,6 +107,8 @@ class TestMetricFlags:
         [("statistical", False), ("stylised_facts", True), ("impact", False),
          ("volume_correlation", True), ("fid", False), ("mind", True),
          ("lob", True), ("resample_method", "last"),
+         ("match_window", True), ("match_window", False),
+         ("match_window", ["10:00", "10:30"]),
          ("plots", ["statistical.radar"])],
     )
     def test_explicit_options_are_forwarded(self, flag, value):
@@ -131,6 +133,19 @@ class TestMetricFlags:
         client = FakeClient()
         with pytest.raises(ValueError, match=match):
             ValidationResource(client).run(sim_ids=SIM_IDS, **IDENTITY, **kwargs)
+        assert client.calls == []
+
+    def test_a_match_window_tuple_is_sent_as_a_list(self):
+        client, _ = _run([{"job_id": "v1"}], match_window=("10:00", "10:30:15"))
+        assert client.calls[0][2]["json"]["config"]["match_window"] == [
+            "10:00", "10:30:15"]
+
+    @pytest.mark.parametrize("value", [["10:00"], "10:00-10:30", 5])
+    def test_a_malformed_match_window_is_refused_before_any_request(self, value):
+        client = FakeClient()
+        with pytest.raises(ValueError, match="match_window"):
+            ValidationResource(client).run(sim_ids=SIM_IDS, **IDENTITY,
+                                           match_window=value)
         assert client.calls == []
 
     def test_the_old_grid_options_are_gone(self):

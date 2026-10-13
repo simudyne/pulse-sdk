@@ -8,6 +8,7 @@ class ApiKeysResource:
     --------
     Mint a key for a job, use it, then revoke it:
 
+    >>> from simudyne import PulseABM
     >>> key = client.api_keys.create(name="Nightly backtest")
     >>> run_client = PulseABM(api_key=key["api_key"])
     >>> client.api_keys.revoke(key_id=key["api_key_id"])
@@ -46,7 +47,8 @@ class ApiKeysResource:
         Raises
         ------
         PulseAPIError
-            If the account has reached its key limit, or ``name`` is rejected.
+            If the calling key is invalid, revoked or expired — status 401.
+            There is no per-account key limit.
 
         See Also
         --------
@@ -65,7 +67,8 @@ class ApiKeysResource:
 
         The full key is never returned after creation; only ``key_prefix``,
         the first 12 characters, is stored. That is enough to tell keys apart
-        and not enough to reconstruct one.
+        and not enough to reconstruct one. Revoked keys are not listed, and
+        at most 100 keys are returned.
 
         Returns
         -------
@@ -75,7 +78,7 @@ class ApiKeysResource:
             - api_key_id (str): the handle to pass to :meth:`revoke`
             - key_prefix (str): first 12 characters, e.g. "pk_live_ab12"
             - name (str): the label you gave it
-            - is_active (bool): False once revoked
+            - is_active (bool): always True, since revoked keys are omitted
             - created_at (str): when it was created
             - last_used_at (str or None): None until the key is first used
             - expires_at (str or None): None for keys that do not expire
@@ -111,12 +114,14 @@ class ApiKeysResource:
         Returns
         -------
         dict
-            The revocation result.
+            ``{"message": "API key revoked"}``.
 
         Raises
         ------
         PulseAPIError
-            If ``key_id`` does not exist or does not belong to your account.
+            Status 404 if ``key_id`` does not exist, does not belong to your
+            account, or has already been revoked; 401 if the calling key is
+            invalid.
 
         See Also
         --------
@@ -131,7 +136,10 @@ class ApiKeysResource:
         Revoking the key you are currently authenticating with locks you out
         of the API, so mint the replacement first:
 
+        >>> from simudyne import PulseABM
+        >>> old_key_id = client.api_keys.list()[0]["api_key_id"]
         >>> replacement = client.api_keys.create(name="Rotated")
+        >>> client = PulseABM(api_key=replacement["api_key"])
         >>> client.api_keys.revoke(key_id=old_key_id)
         """
         return self._client._request("DELETE", f"/api-keys/{key_id}")
