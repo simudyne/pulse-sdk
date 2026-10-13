@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.3 (2026-10-13)
+
+### Bug Fixes
+
+- **client**: Never resend a submit whose answer was lost
+  ([`81f5840`](https://github.com/simudyne/pulse-sdk/commit/81f5840ef300197f4863dffa74f5dc92b7c40710))
+
+- retries are now per method: reads (GET, and the bulk download) retry on 502/503/504, timeouts and
+  connection errors as before; calls that create or change something (simulation.run,
+  validation.run, run_lrm, api_keys.create/revoke, fm.live and the fm admin calls) retry only on 503
+  or a connection that never opened, so a 502, 504 or read timeout after the API queued a job no
+  longer queues a second one - 429 is retried only with Retry-After (honoured, capped at 60 s); the
+  download-quota 429 is raised at once instead of after ~7 s of sleeps - validation.get_job writes
+  figures and adds plot_paths only when something was drawn, not on every poll - validation.run
+  reads generator groups once, so they are no longer exhausted by the count and sent empty -
+  fm.register takes testdata, which the API already accepts - docstrings updated to the new retry
+  behaviour
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Features
+
+- **validation**: Match_window, and docstrings corrected against the API
+  ([`ee3fb6d`](https://github.com/simudyne/pulse-sdk/commit/ee3fb6d619d876cc1d9760d06d37061e9a6767ce))
+
+- validation.run takes match_window: False/None (whole day), True (the historical day cut to the
+  runs' own span) or [start, end] (both sides cut to that interval); the shape is checked locally,
+  the interval by the API (422) - every public method's docstring checked against pulse-api-pod:
+  tier gates (pro or demo; admin flag for fm registry/register/activate/ deactivate), return shapes
+  (calibrate has no job id, run_lrm no sim_ids), the error codes each route really returns, and
+  claims that were not true (key limit, malformed-date 422, synchronous validation failures, FIX 4.4
+  — the venue is FIX 5.0 SP2 over FIXT.1.1) - examples made self-contained and correct:
+  complete/completed and error/failed statuses, list_jobs params, plot file names
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v0.9.0-dev.2 (2026-10-06)
 
 ### Features
