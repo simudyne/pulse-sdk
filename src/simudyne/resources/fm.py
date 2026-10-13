@@ -32,7 +32,11 @@ class FmResource:
     model accepts, then submit through ``client.simulation.run(engine="fm")``
     like any other simulation.
 
-    Every call on this resource requires a pro-tier key.
+    :meth:`models` and :meth:`live` require a pro- or demo-tier key.
+    :meth:`registry`, :meth:`register`, :meth:`activate` and
+    :meth:`deactivate` require a key whose account has the admin flag
+    (``is_admin`` in :meth:`~simudyne.resources.profile.ProfileResource.get`);
+    tier plays no part in those four.
 
     Examples
     --------
@@ -61,7 +65,7 @@ class FmResource:
     def models(self):
         """Foundation models active in this environment.
 
-        Requires a pro-tier key.
+        Requires a pro- or demo-tier key.
 
         Returns
         -------
@@ -84,7 +88,8 @@ class FmResource:
         Raises
         ------
         PulseAPIError
-            If the key is not pro tier — status 403.
+            If the key is not pro or demo tier (403), or the model registry
+            (pulse-orchestrator) cannot be reached (502).
 
         See Also
         --------
@@ -124,11 +129,12 @@ class FmResource:
         Raises
         ------
         PulseAPIError
-            If the key is not an admin key — status 403.
+            If the key's account lacks the admin flag (403), or the
+            orchestrator cannot be reached (502).
 
         See Also
         --------
-        models : The active models only, for any pro key.
+        models : The active models only, for any pro or demo key.
         register : Add a model or a new version of one.
 
         Examples
@@ -148,6 +154,7 @@ class FmResource:
         supported_data: list | None = None,
         min_prompt_rows: int | None = None,
         production_name: str = "",
+        testdata: dict | None = None,
         active: bool = True,
     ):
         """Admin: register a model image, or a new version of one.
@@ -178,6 +185,11 @@ class FmResource:
             Context rows it needs to start inference.
         production_name : str, default ""
             The name to promote it under, ``{model}-{market}-{version}-{size}``.
+        testdata : dict, optional
+            The real day baked into the image as its test data,
+            ``{"provider", "exchange", "symbol", "date"}``. Test-data runs are
+            minted under that day, so their sim_ids name it instead of
+            ``na:na:testdata:na``.
         active : bool, default True
             Whether :meth:`models` lists it.
 
@@ -190,8 +202,12 @@ class FmResource:
         Raises
         ------
         PulseAPIError
-            If the key is not an admin key (403), or a field is rejected (400
-            or 422).
+            If the key's account lacks the admin flag (403); ``image`` is not
+            found in its container registry, or ``model_args`` or
+            ``supported_data`` is malformed (400); a field has the wrong type
+            (422); the deployment's registry is a read-only manifest, so
+            models cannot be registered through the API (501); or the
+            orchestrator, or the image check, cannot be reached (502).
 
         See Also
         --------
@@ -217,6 +233,7 @@ class FmResource:
         for name, value in (
             ("resources", resources), ("model_args", model_args),
             ("supported_data", supported_data), ("min_prompt_rows", min_prompt_rows),
+            ("testdata", testdata),
         ):
             if value is not None:
                 payload[name] = value
@@ -239,7 +256,9 @@ class FmResource:
         Raises
         ------
         PulseAPIError
-            If the key is not an admin key (403) or the model is unknown (404).
+            If the key's account lacks the admin flag (403), the model is
+            unknown (404), the deployment's registry is a read-only manifest
+            (501), or the orchestrator cannot be reached (502).
 
         See Also
         --------
@@ -270,7 +289,9 @@ class FmResource:
         Raises
         ------
         PulseAPIError
-            If the key is not an admin key (403) or the model is unknown (404).
+            If the key's account lacks the admin flag (403), the model is
+            unknown (404), the deployment's registry is a read-only manifest
+            (501), or the orchestrator cannot be reached (502).
 
         See Also
         --------
@@ -293,7 +314,7 @@ class FmResource:
         """Start a live streaming session instead of a batch job.
 
         Returns the token a live chart client uses to connect. Requires a
-        pro-tier key.
+        pro- or demo-tier key.
 
         Parameters
         ----------
@@ -316,7 +337,9 @@ class FmResource:
         ------
         PulseAPIError
             If ``model_id`` is unknown (404), ``model_args`` holds an unknown
-            or out-of-range key (400), or the key is not pro tier (403).
+            or out-of-range key (400), the key is not pro or demo tier (403),
+            this deployment cannot host live sessions (501), or the
+            orchestrator cannot be reached (502).
 
         See Also
         --------

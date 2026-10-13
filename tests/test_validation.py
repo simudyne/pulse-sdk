@@ -107,6 +107,8 @@ class TestMetricFlags:
         [("statistical", False), ("stylised_facts", True), ("impact", False),
          ("volume_correlation", True), ("fid", False), ("mind", True),
          ("lob", True), ("resample_method", "last"),
+         ("match_window", True), ("match_window", False),
+         ("match_window", ["10:00", "10:30"]),
          ("plots", ["statistical.radar"])],
     )
     def test_explicit_options_are_forwarded(self, flag, value):
@@ -131,6 +133,19 @@ class TestMetricFlags:
         client = FakeClient()
         with pytest.raises(ValueError, match=match):
             ValidationResource(client).run(sim_ids=SIM_IDS, **IDENTITY, **kwargs)
+        assert client.calls == []
+
+    def test_a_match_window_tuple_is_sent_as_a_list(self):
+        client, _ = _run([{"job_id": "v1"}], match_window=("10:00", "10:30:15"))
+        assert client.calls[0][2]["json"]["config"]["match_window"] == [
+            "10:00", "10:30:15"]
+
+    @pytest.mark.parametrize("value", [["10:00"], "10:00-10:30", 5])
+    def test_a_malformed_match_window_is_refused_before_any_request(self, value):
+        client = FakeClient()
+        with pytest.raises(ValueError, match="match_window"):
+            ValidationResource(client).run(sim_ids=SIM_IDS, **IDENTITY,
+                                           match_window=value)
         assert client.calls == []
 
     def test_the_old_grid_options_are_gone(self):
@@ -231,6 +246,36 @@ class TestOneEntryPoint:
         res.list_jobs(limit=5)
         assert client.calls[0][:2] == ("GET", "/validation/jobs/v1")
         assert client.calls[1][2]["params"] == {"limit": 5, "offset": 0}
+
+
+class TestGetJobOnlyWritesWhatWasDrawn:
+    """The API always sends a plots object with one empty list per category."""
+
+    EMPTY = {"distributions": [], "distances": [], "impact_response": [],
+             "stylised_facts": [], "volume_correlation": []}
+
+    def test_no_figures_writes_nothing(self, tmp_path):
+        target = tmp_path / "figs"
+        client = FakeClient([{"job_id": "v1", "status": "running",
+                              "plots": dict(self.EMPTY)}])
+        job = ValidationResource(client).get_job("v1", plot_dir=target)
+        assert "plot_paths" not in job
+        assert not target.exists()
+
+    def test_figures_are_written(self, tmp_path):
+        plots = dict(self.EMPTY, distances=[
+            {"id": "statistical.radar", "name": "radar", "content_base64": PNG}])
+        client = FakeClient([{"job_id": "v1", "status": "completed", "plots": plots}])
+        job = ValidationResource(client).get_job("v1", plot_dir=tmp_path)
+        assert len(job["plot_paths"]) == 1
+
+
+class TestGeneratorGroups:
+    def test_a_generator_group_is_sent_in_full(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_ids={"abm": (i for i in SIM_IDS)}, **IDENTITY)
+        assert client.calls[0][2]["json"]["sim_ids"] == {"abm": SIM_IDS}
 
 
 class TestSimulatedFrameShapes:

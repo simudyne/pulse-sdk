@@ -11,6 +11,30 @@ import math
 from simudyne.exceptions import PulseAPIError, error_from_response  # noqa: F401
 
 
+def _never_reached_server(error: Exception) -> bool:
+    """Whether a transport error happened before the request was sent.
+
+    A connect timeout, a refused connection or a failed DNS lookup means the
+    API never saw the request, so even a submit is safe to send again. A
+    read timeout or a dropped connection may come after the API acted.
+    """
+    if isinstance(error, requests.exceptions.ConnectTimeout):
+        return True
+    if isinstance(error, requests.exceptions.ConnectionError):
+        from urllib3.exceptions import NewConnectionError
+
+        seen = set()
+        cause = error
+        while cause is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            if isinstance(cause, NewConnectionError):
+                return True
+            reason = getattr(cause, "reason", None)
+            nested = cause.args[0] if getattr(cause, "args", None) else None
+            cause = reason or (nested if isinstance(nested, BaseException) else None) or cause.__cause__
+    return False
+
+
 class PulseABM:
     """Client for the Simudyne Pulse synthetic market data API.
 
@@ -19,9 +43,20 @@ class PulseABM:
     Construct it once and reuse it; the underlying :class:`requests.Session`
     keeps connections alive across calls.
 
-    Transient failures (HTTP 429, 502, 503, 504) and network timeouts are
-    retried automatically with exponential backoff. Any other non-2xx response
-    raises :class:`~simudyne.exceptions.PulseAPIError`.
+    Transient failures are retried automatically with exponential backoff,
+    but only where sending the request twice is safe. A read (GET, and the
+    bulk download) is retried on HTTP 502, 503, 504, timeouts and connection
+    errors. A call that creates or changes something — submitting a
+    simulation or validation, minting or revoking a key — is retried only on
+    503 or when the connection never opened, because a 502, 504 or read
+    timeout may arrive after the API acted. A 429 is retried only when it
+    carries ``Retry-After``; the download quota's 429 is raised at once. Any
+    other non-2xx response, and a retried status still failing once the
+    retries run out, raises :class:`~simudyne.exceptions.PulseAPIError`. A timeout or
+    connection failure that outlasts the retries is not wrapped: it surfaces
+    as the underlying :class:`requests.Timeout` or
+    :class:`requests.ConnectionError`, so catch those alongside
+    ``PulseAPIError`` if you need to handle every failure.
 
     Parameters
     ----------
@@ -36,7 +71,8 @@ class PulseABM:
         Per-request timeout in seconds. Defaults to 30.
     max_retries : int, default 3
         Retry attempts for transient errors. Backoff is ``2 ** attempt``
-        seconds, so the default waits 1s, 2s then 4s before giving up.
+        seconds, so the default waits 1s, 2s then 4s before giving up; a
+        ``Retry-After`` header, when sent, is honoured (capped at 60 s).
 
     Attributes
     ----------
@@ -83,6 +119,9 @@ class PulseABM:
     DEFAULT_BASE_URL = "https://pulse-api.simudyne.com"
     DEFAULT_TIMEOUT = 30
     RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+    #: Methods safe to send twice. DELETE is left out on purpose: a revoke
+    #: that succeeded but whose answer was lost would come back as a 404.
+    IDEMPOTENT_METHODS = {"GET", "HEAD", "OPTIONS"}
 
     def __init__(
         self,
@@ -117,9 +156,25 @@ class PulseABM:
         self.simulation = SimulationResource(self)
         self.validation = ValidationResource(self)
 
-    def _request_with_retries(self, method: str, url: str, **kwargs):
-        """Execute request with timeout and exponential backoff for transient errors."""
+    def _request_with_retries(self, method: str, url: str, idempotent=None, **kwargs):
+        """Execute a request, retrying only what is safe to send twice.
+
+        A read (GET, or a POST the caller marks ``idempotent=True``, such as
+        the bulk download) is retried on 502/503/504, on a timeout and on a
+        connection failure. A call that creates or changes something —
+        submitting a simulation or validation, minting or revoking a key,
+        launching a live session — is retried only when the API cannot have
+        acted on it: the connection never opened, or the API answered 503.
+        A 502, 504 or read timeout on such a call may arrive after the job
+        was queued, and retrying it used to queue a second one.
+
+        A 429 is retried only when it carries ``Retry-After``, as a rate
+        limiter's does. The API's own 429 is the free-tier download quota,
+        which does not clear in seconds; it is raised at once.
+        """
         kwargs.setdefault("timeout", self.timeout)
+        if idempotent is None:
+            idempotent = method.upper() in self.IDEMPOTENT_METHODS
         last_exception = None
 
         for attempt in range(self.max_retries + 1):
@@ -129,22 +184,44 @@ class PulseABM:
                 if response.ok:
                     return response
 
-                if response.status_code in self.RETRYABLE_STATUS_CODES and attempt < self.max_retries:
-                    delay = 2 ** attempt
-                    time.sleep(delay)
+                if attempt < self.max_retries and self._should_retry(
+                    response, idempotent
+                ):
+                    time.sleep(self._retry_delay(response, attempt))
                     continue
 
                 raise error_from_response(response)
 
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 last_exception = e
-                if attempt < self.max_retries:
-                    delay = 2 ** attempt
-                    time.sleep(delay)
+                if attempt < self.max_retries and (
+                    idempotent or _never_reached_server(e)
+                ):
+                    time.sleep(2 ** attempt)
                     continue
                 raise
 
         raise last_exception
+
+    def _should_retry(self, response, idempotent: bool) -> bool:
+        status = response.status_code
+        if status == 429:
+            return "Retry-After" in response.headers
+        if status not in self.RETRYABLE_STATUS_CODES:
+            return False
+        return idempotent or status == 503
+
+    @staticmethod
+    def _retry_delay(response, attempt: int) -> float:
+        """``Retry-After`` seconds when the server gives them (capped at 60),
+        otherwise exponential backoff: 1, 2, 4 s."""
+        header = response.headers.get("Retry-After")
+        if header is not None:
+            try:
+                return min(max(float(header), 0.0), 60.0)
+            except ValueError:
+                pass
+        return 2 ** attempt
 
     def _request(self, method: str, endpoint: str, **kwargs):
         url = f"{self.base_url}{endpoint}"

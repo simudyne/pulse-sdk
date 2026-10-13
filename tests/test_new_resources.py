@@ -98,6 +98,15 @@ class TestFmResource:
         assert "prompt" not in body
         assert "model_args" not in body
 
+    def test_register_sends_testdata_only_when_given(self):
+        day = {"provider": "bmll", "exchange": "hkex_securities",
+               "symbol": "700", "date": "2026-01-20"}
+        client = FakeClient([{}, {}])
+        FmResource(client).register("m", "1.0", "img", testdata=day)
+        FmResource(client).register("m", "1.0", "img")
+        assert client.calls[0][2]["json"]["testdata"] == day
+        assert "testdata" not in client.calls[1][2]["json"]
+
     def test_running_is_not_on_this_resource(self):
         # The merge is the point: a caller who reaches for client.fm.run gets
         # an AttributeError pointing them at client.simulation.run, rather than
