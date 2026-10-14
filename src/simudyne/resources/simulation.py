@@ -1017,6 +1017,54 @@ class SimulationResource:
         """
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
 
+    def get_sim_events(self, sim_id: str):
+        """Rare order-book events and spoofing-like patterns in one simulated run.
+
+        Runs the same event detector the platform uses on real market data
+        over this run's order book: liquidity withdrawals, spread blowouts,
+        price jumps, volume bursts, quote stuffing, cliffs, spoofing-like
+        patterns and auctions. Computed on first request, then cached.
+
+        Parameters
+        ----------
+        sim_id : str
+            The simulation ID (an agent-based run; foundation-model runs have
+            no order lifecycle to scan).
+
+        Returns
+        -------
+        dict
+            ``{"sim_id", "symbol", "date", "detector_version", "stats",
+            "events": [...]}``. Each event has ``type``, ``side``, ``ts``,
+            ``ts_end``, ``severity`` (0-100), ``features``, ``checks`` (each
+            rule the detector tested and whether it passed) and
+            ``order_ids``: for a ``spoofing_like`` event, the orders behind it.
+            An order from a schedule (``css`` with ``rows``) keeps its row's
+            ``ref`` as its id, with ``#<n>`` added for an iceberg's later
+            peaks, so you can check which of your own orders were caught.
+
+        Raises
+        ------
+        PulseAPIError
+            404 if ``sim_id`` is unknown or the run wrote no order book; 422
+            for a foundation-model run.
+
+        See Also
+        --------
+        get_sim_event : One event with its full signature picture.
+
+        Examples
+        --------
+        >>> events = client.simulation.get_sim_events(sim_id)["events"]
+        >>> spoofs = [e for e in events if e["type"] == "spoofing_like"]
+        >>> caught = {i.split("#")[0] for e in spoofs for i in e["order_ids"]}
+        """
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events")
+
+    def get_sim_event(self, sim_id: str, event_id: str):
+        """One event from :meth:`get_sim_events`, with its full signature picture."""
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events/{event_id}")
+
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """Download simulation data as a Polars DataFrame.
 

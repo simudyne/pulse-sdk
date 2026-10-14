@@ -221,3 +221,21 @@ class TestSimulationAdditions:
         out = SimulationResource(client).get_job_logs("job-1")
         assert out == "engine log line"
         assert client.calls[0][1].endswith("/simulation/jobs/job-1/logs")
+
+
+class TestSimEvents:
+    def test_events_path(self):
+        client = FakeClient([{"events": []}])
+        SimulationResource(client).get_sim_events("a:b:c")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/events")
+
+    def test_event_path(self):
+        client = FakeClient([{}])
+        SimulationResource(client).get_sim_event("a:b:c", "ev1")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/events/ev1")
+
+    def test_css_rows_pass_through_unchanged(self):
+        rows = [{"time": "2025-09-02 10:00:00", "ref": "spoof-0", "order_type": "limit",
+                 "side": "buy", "size": 500, "price_ref": "near", "offset_ticks": 2, "lifetime_s": 4}]
+        out = SimulationResource._serialize_exec_algos([{"type": "css", "side": "sell", "rows": rows}])
+        assert out == [{"type": "css", "side": "sell", "rows": rows}]
