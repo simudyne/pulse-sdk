@@ -1107,28 +1107,8 @@ class SimulationResource:
         See Also
         --------
         get_sim_event : One event with its full signature picture.
-
-        Notes
-        -----
-        ``GET /simulation/results/{sim_id}/schedule-orders`` (no method yet)
-        lists every order the schedule placed, with ``thresholds`` (the
-        run's ``median_size``, ``size_quantile``, ``size_floor``,
-        ``small_size``, ``tick``, ``aggressor_ids`` and each role's
-        parameters) and ``orders``, each ``{ref, role, side, t_place, t_end,
-        end, price, size, filled, peaks, ticks_behind_touch, ticks_from_mid,
-        tested_against, rules, meets_rules, amends}``: ``end`` is "filled",
-        "cancelled" or "open"; ``tested_against`` the role's event type (None
-        for genuine); ``rules`` that type's rules measured on the order, each
-        ``{label, value, need, passed, basis, source}`` (empty for genuine
-        orders and the window-level roles stuff, ignite and close);
-        ``meets_rules`` whether all passed (None where ``rules`` is empty);
-        ``amends`` ``[{t, price, size}]``. On a run without aggressor ids,
-        wash and paint orders carry one rule, ``aggressor_ids``. The
-        client's session carries the key::
-
-            client.session.get(
-                f"{client.base_url}/simulation/results/{sim_id}/schedule-orders"
-            ).json()
+        get_sim_schedule_orders : The schedule's orders and the rules of
+            their roles measured on each.
 
         Examples
         --------
@@ -1146,6 +1126,73 @@ class SimulationResource:
         spread, imbalance and activity traces.
         """
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events/{event_id}")
+
+    def get_sim_schedule_orders(self, sim_id: str):
+        """Every order a schedule placed in one run, and how it measured
+        against the rules of its role.
+
+        Orders are the ones a ``css`` schedule with ``rows`` placed, found by
+        their ``ref`` (iceberg peaks and a limited peg's re-entries,
+        ``<ref>#<k>``, are folded into one order). Genuine orders are listed
+        too. A planted order that :meth:`get_sim_events` did not catch says
+        here which rule it failed. Computed with the events, then cached.
+
+        Parameters
+        ----------
+        sim_id : str
+            The simulation ID (an agent-based run).
+
+        Returns
+        -------
+        dict
+            ``{"thresholds", "orders"}``.
+
+            - thresholds (dict): the run's ``median_size``,
+              ``size_quantile``, ``size_floor``, ``small_size``, ``tick``,
+              ``aggressor_ids`` (whether the run records the aggressor of
+              each trade) and each role's parameters (``spoof``, ``layer``,
+              ``probe``, ``advance``, ``smoke``, ``wash``, ``paint``)
+            - orders (list of dict), each:
+
+              - ref (str), role (str): genuine, spoof, layer, stuff, probe,
+                advance, ignite, smoke, close, wash or paint
+              - side (str): "bid" or "ask"
+              - t_place, t_end, end: placed, and filled or cancelled;
+                ``end`` is "filled", "cancelled" or "open". An order that
+                filled on arrival is placed at its first fill.
+              - price, size, filled, peaks
+              - ticks_behind_touch, ticks_from_mid: where it rested when
+                placed
+              - tested_against (str or None): the event type its role is
+                planted for; None for genuine
+              - rules (dict): ``{rule_key: {label, value, need, passed,
+                basis, source}}``, that type's rules measured on the order;
+                empty for genuine orders and the window-level roles stuff,
+                ignite and close. On a run without aggressor ids, wash and
+                paint orders carry one rule, ``aggressor_ids``.
+              - meets_rules (bool or None): whether every rule passed; None
+                where ``rules`` is empty or the run has no aggressor ids
+              - amends (list of dict): ``{t, price, size}`` per amend the
+                schedule made to it
+
+        Raises
+        ------
+        PulseAPIError
+            404 if ``sim_id`` is unknown or the run wrote no order book; 422
+            for a foundation-model run.
+
+        See Also
+        --------
+        get_sim_events : The events that caught (or missed) these orders.
+
+        Examples
+        --------
+        >>> report = client.simulation.get_sim_schedule_orders(sim_id)
+        >>> for o in report["orders"]:
+        ...     if o["role"] == "spoof" and o["meets_rules"] is False:
+        ...         print(o["ref"], [r["label"] for r in o["rules"].values() if not r["passed"]])
+        """
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/schedule-orders")
 
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """Download simulation data as a Polars DataFrame.
