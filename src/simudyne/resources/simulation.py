@@ -229,10 +229,33 @@ class SimulationResource:
             - horizon: execution window in SECONDS, e.g. 3600 (required)
             - start_time: e.g. "09:30:00" (optional, defaults to market open)
 
-            For CSS (custom static schedule):
+            For CSS (custom static schedule), one of:
 
             - type: "css" (required)
-            - orders: dict mapping timestamps to quantities (required)
+            - orders: dict mapping timestamps to quantities, or
+            - rows (ABM only): a list of individual orders, each a dict with
+              ``time`` (exchange-local, to the millisecond), ``ref`` (unique
+              per order; no "," or "#"), ``order_type`` ("market", "limit",
+              "ioc", "cancel", "stop", "stop_limit" or "amend"), ``side``
+              ("buy"/"sell") and ``size`` (lots). Optional: ``price_ref``
+              ("near", "far" or "mid") and ``offset_ticks`` (positive = less
+              aggressive), ``peg``, ``peg_limit_ticks``, ``peak``,
+              ``peak_random_pct``, ``lifetime_s``, ``stop_offset_ticks``.
+              ``peg_limit_ticks`` (>= 0, pegged limit orders only) gives a peg
+              a limit: its reference when entered, moved that many ticks in
+              the aggressive direction. While the reference is past the limit
+              the order is pulled; it comes back at the back of the queue, as
+              ``<ref>#<n>``, when the reference returns (LSE MIT201 6.1).
+              A ``cancel`` row names an earlier ``ref``. An ``amend`` row
+              names an earlier limit or stop_limit ``ref`` that no earlier
+              row cancels, and gives a new price (``price_ref`` and
+              ``offset_ticks``, priced at the amend time), a new remaining
+              visible ``size``, or both. A price change loses queue
+              priority, a size change alone keeps it, and an amend of an
+              order that has already filled or been cancelled does nothing.
+              A price amend of a pegged order is a 422. A ``ref`` of the form
+              ``<role>-<n>`` (e.g. "spoof-3") names the order's role for
+              :meth:`get_sim_events`.
 
             An FM job accepts at most one algo and needs a real market day —
             a testdata run cannot carry one.
@@ -1018,12 +1041,22 @@ class SimulationResource:
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
 
     def get_sim_events(self, sim_id: str):
-        """Rare order-book events and spoofing-like patterns in one simulated run.
+        """Market-quality events and source-backed manipulation patterns in one run.
 
         Runs the same event detector the platform uses on real market data
-        over this run's order book: liquidity withdrawals, spread blowouts,
-        price jumps, volume bursts, quote stuffing, cliffs, spoofing-like
-        patterns and auctions. Computed on first request, then cached.
+        over this run's order book. Computed on first request, then cached.
+
+        Types that run on any data: market quality (``liquidity_withdrawal``,
+        ``spread_blowout``, ``price_jump``, ``volume_burst``, ``cliff``,
+        ``auction``) and manipulation (``spoofing_like``, ``layering``,
+        ``quote_stuffing``, ``ping_orders``, ``advancing_bid``,
+        ``momentum_ignition``, ``smoking``, ``marking_close``,
+        ``auction_cancel``). Simulation only, because they need the account:
+        ``wash_trade`` and ``painting_tape``, plus the account form of
+        ``marking_close`` (``features["form"] == "account"``). The account is
+        the run's own scheduled orders, and these rules need the aggressor of
+        each trade (``aggressor_order_id`` on newer runs' TRADE rows); an
+        older run gets none of them.
 
         Parameters
         ----------
@@ -1035,13 +1068,35 @@ class SimulationResource:
         -------
         dict
             ``{"sim_id", "symbol", "date", "detector_version", "stats",
-            "events": [...]}``. Each event has ``type``, ``side``, ``ts``,
-            ``ts_end``, ``severity`` (0-100), ``features``, ``checks`` (each
-            rule the detector tested and whether it passed) and
-            ``order_ids``: for a ``spoofing_like`` event, the orders behind it.
+            "events": [...]}``. Each event has:
+
+            - event_id (str): pass to :meth:`get_sim_event`
+            - type (str), side (str or None: "bid"/"ask", "buy"/"sell" for
+              marking_close, "up"/"down" for price moves)
+            - ts, ts_end, duration_ms, severity (0-100), score,
+              severity_basis
+            - features (dict): the type's measurements
+            - checks (list of dict): every rule applied, each ``{label,
+              value, rule, passed, basis, source}``; ``basis`` is "doc" (an
+              enforcement case or study gives the figure), "default"
+              (Pulse's calibration) or None for context rows, ``source`` a
+              short citation
+            - order_ids (list of str): for an order-level type
+              (spoofing_like, layering, ping_orders, advancing_bid, smoking,
+              auction_cancel, wash_trade, painting_tape) the orders behind
+              the event; for a window-level type (quote_stuffing,
+              momentum_ignition, marking_close) the base refs of the
+              scheduled orders placed inside [ts, ts_end]
+            - thumb: a small normalised picture
+
             An order from a schedule (``css`` with ``rows``) keeps its row's
-            ``ref`` as its id, with ``#<n>`` added for an iceberg's later
-            peaks, so you can check which of your own orders were caught.
+            ``ref`` as its id, with ``#<k>`` added for an iceberg's later
+            peaks and a limited peg's re-entries. A ref is ``<role>-<n>``;
+            the role (spoof, layer, stuff, probe, advance, ignite, smoke,
+            close, wash, paint; anything else is genuine) names the type the
+            order was planted for, and a planted order is caught when an
+            event of that type lists its base ref (a layer is also caught by
+            spoofing_like).
 
         Raises
         ------
@@ -1053,6 +1108,28 @@ class SimulationResource:
         --------
         get_sim_event : One event with its full signature picture.
 
+        Notes
+        -----
+        ``GET /simulation/results/{sim_id}/schedule-orders`` (no method yet)
+        lists every order the schedule placed, with ``thresholds`` (the
+        run's ``median_size``, ``size_quantile``, ``size_floor``,
+        ``small_size``, ``tick``, ``aggressor_ids`` and each role's
+        parameters) and ``orders``, each ``{ref, role, side, t_place, t_end,
+        end, price, size, filled, peaks, ticks_behind_touch, ticks_from_mid,
+        tested_against, rules, meets_rules, amends}``: ``end`` is "filled",
+        "cancelled" or "open"; ``tested_against`` the role's event type (None
+        for genuine); ``rules`` that type's rules measured on the order, each
+        ``{label, value, need, passed, basis, source}`` (empty for genuine
+        orders and the window-level roles stuff, ignite and close);
+        ``meets_rules`` whether all passed (None where ``rules`` is empty);
+        ``amends`` ``[{t, price, size}]``. On a run without aggressor ids,
+        wash and paint orders carry one rule, ``aggressor_ids``. The
+        client's session carries the key::
+
+            client.session.get(
+                f"{client.base_url}/simulation/results/{sim_id}/schedule-orders"
+            ).json()
+
         Examples
         --------
         >>> events = client.simulation.get_sim_events(sim_id)["events"]
@@ -1062,7 +1139,12 @@ class SimulationResource:
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events")
 
     def get_sim_event(self, sim_id: str, event_id: str):
-        """One event from :meth:`get_sim_events`, with its full signature picture."""
+        """One event from :meth:`get_sim_events`, with its full signature picture.
+
+        The same fields as an event in :meth:`get_sim_events`, plus
+        ``signature``: a normalised depth picture around the event with
+        spread, imbalance and activity traces.
+        """
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events/{event_id}")
 
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
