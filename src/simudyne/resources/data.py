@@ -38,6 +38,23 @@ _FILTERS_DOC = """
             failure at any stage; the reason is in ``calibration_error``.
             :meth:`calibrated_data` lists calibrated days only, so there
             anything but "calibrated" matches nothing.
+        min_trades, max_trades, min_messages, max_messages, min_volume,
+        max_volume, min_spread_ticks, max_spread_ticks : number, optional
+            Bounds on a scanned day's measured stats. Demo tier.
+        tick_size, lot_size : float, optional
+            Scanned days with exactly this tick or lot size. Demo tier.
+        currency, instrument_type : str, optional
+            Scanned days in this currency (e.g. "GBp") or of this type
+            (e.g. "equity"). Demo tier.
+        calibratable : bool, optional
+            Scanned days that can (True) or cannot (False) be calibrated: a
+            day needs at least one trade and fewer than 10,000,000 messages.
+            Demo tier.
+        scanned_only : bool, default False
+            Only days the catalog has scanned. Demo tier.
+        include_stats : bool, default False
+            Add each scanned day's measured ``stats``. Demo tier; ``None`` on
+            every other tier.
 """
 
 _ROWS_DOC = """
@@ -58,12 +75,26 @@ _ROWS_DOC = """
                 day's LATEST calibration record
               - calibration_stage, calibration_error, calibration_updated_at,
                 pulse_version, number_of_msgs, volume_traded, reference_price
+              - scanned, calibratable, not_calibratable_reason, event_counts,
+                stats: figures from the vendor data, demo tier only (None on
+                every other tier)
+
+            Filtering on a demo-tier field from another tier raises 403 rather
+            than returning an unfiltered answer.
 """
+
+
+#: On/off flags whose False is the server's default, so False is not sent.
+#: (calibratable is not one: False asks for the days that CANNOT be calibrated.)
+_DEFAULT_OFF_FLAGS = ("scanned_only", "include_stats")
 
 
 def _day_params(**filters) -> dict | None:
     """Query parameters for either catalog call, without unset filters."""
-    params = {k: v for k, v in filters.items() if v is not None}
+    params = {
+        k: v for k, v in filters.items()
+        if v is not None and not (k in _DEFAULT_OFF_FLAGS and v is False)
+    }
     return params or None
 
 
@@ -95,6 +126,21 @@ class DataResource:
         date_from: str | None = None,
         date_to: str | None = None,
         calibration_status: str | None = None,
+        min_trades: int | None = None,
+        max_trades: int | None = None,
+        min_messages: int | None = None,
+        max_messages: int | None = None,
+        min_volume: float | None = None,
+        max_volume: float | None = None,
+        min_spread_ticks: float | None = None,
+        max_spread_ticks: float | None = None,
+        tick_size: float | None = None,
+        lot_size: float | None = None,
+        currency: str | None = None,
+        instrument_type: str | None = None,
+        calibratable: bool | None = None,
+        scanned_only: bool = False,
+        include_stats: bool = False,
         limit: int | None = None,
         offset: int | None = None,
     ):
@@ -134,9 +180,10 @@ class DataResource:
         Raises
         ------
         PulseAPIError
-            If the key is not pro or demo tier (403); ``model_id`` names a
-            model that is not registered (404) or matches more than one (400);
-            a date is not ``YYYY-MM-DD``, ``date`` is combined with a range,
+            If the key is not pro or demo tier (403), or filters on a demo-tier
+            field from another tier (403); ``model_id`` names a model that is
+            not registered (404) or matches more than one (400); a date is not
+            ``YYYY-MM-DD``, ``date`` is combined with a range,
             ``calibration_status`` is not one of the three values, ``limit`` is
             outside 1-200 or ``offset`` is negative (422); or, with
             ``model_id``, the model registry (pulse-orchestrator) could not be
@@ -176,12 +223,26 @@ class DataResource:
         ...     exchange="lse", date_from="2025-07-01", date_to="2025-07-31",
         ...     calibration_status="failed",
         ... )
+
+        Days that can be calibrated but are not yet (demo tier):
+
+        >>> page = client.data.available_data(
+        ...     exchange="lse", date_from="2025-07-01", date_to="2025-07-31",
+        ...     calibratable=True,
+        ... )
         """
         return self._client._request("GET", AVAILABLE_DATA_PATH, params=_day_params(
             model_id=model_id, symbol=symbol, q=q, provider=provider, exchange=exchange,
             date=date, date_from=date_from, date_to=date_to,
             calibration_status=calibration_status,
-            limit=limit, offset=offset,
+            min_trades=min_trades, max_trades=max_trades,
+            min_messages=min_messages, max_messages=max_messages,
+            min_volume=min_volume, max_volume=max_volume,
+            min_spread_ticks=min_spread_ticks, max_spread_ticks=max_spread_ticks,
+            tick_size=tick_size, lot_size=lot_size,
+            currency=currency, instrument_type=instrument_type,
+            calibratable=calibratable, scanned_only=scanned_only,
+            include_stats=include_stats, limit=limit, offset=offset,
         ))
 
     def calibrated_data(
@@ -194,6 +255,21 @@ class DataResource:
         date_from: str | None = None,
         date_to: str | None = None,
         calibration_status: str | None = None,
+        min_trades: int | None = None,
+        max_trades: int | None = None,
+        min_messages: int | None = None,
+        max_messages: int | None = None,
+        min_volume: float | None = None,
+        max_volume: float | None = None,
+        min_spread_ticks: float | None = None,
+        max_spread_ticks: float | None = None,
+        tick_size: float | None = None,
+        lot_size: float | None = None,
+        currency: str | None = None,
+        instrument_type: str | None = None,
+        calibratable: bool | None = None,
+        scanned_only: bool = False,
+        include_stats: bool = False,
         limit: int | None = None,
         offset: int | None = None,
     ):
@@ -224,10 +300,11 @@ class DataResource:
         Raises
         ------
         PulseAPIError
-            If a date is not ``YYYY-MM-DD``, ``date`` is combined with a
-            range, ``calibration_status`` is not one of the three values,
-            ``limit`` is outside 1-1000 or ``offset`` is negative (422).
-            Available on every tier.
+            If a filter on a demo-tier field comes from another tier (403), or
+            a date is not ``YYYY-MM-DD``, ``date`` is combined with a range,
+            ``calibration_status`` is not one of the three values, ``limit`` is
+            outside 1-1000 or ``offset`` is negative (422). Available on every
+            tier.
 
         See Also
         --------
@@ -260,7 +337,14 @@ class DataResource:
             symbol=symbol, q=q, provider=provider, exchange=exchange,
             date=date, date_from=date_from, date_to=date_to,
             calibration_status=calibration_status,
-            limit=limit, offset=offset,
+            min_trades=min_trades, max_trades=max_trades,
+            min_messages=min_messages, max_messages=max_messages,
+            min_volume=min_volume, max_volume=max_volume,
+            min_spread_ticks=min_spread_ticks, max_spread_ticks=max_spread_ticks,
+            tick_size=tick_size, lot_size=lot_size,
+            currency=currency, instrument_type=instrument_type,
+            calibratable=calibratable, scanned_only=scanned_only,
+            include_stats=include_stats, limit=limit, offset=offset,
         ))
 
     # The two calls share their filters and row shape, so their docs share the
@@ -330,10 +414,11 @@ class DataResource:
             If the key is not demo tier (403); ``provider`` or ``exchange`` is
             not a recognised value (422); the day has no market data — a
             weekend, an exchange holiday, a day the vendor did not deliver
-            (422); or the calibration service is unreachable (503). A day that
-            is queued and then fails shows up in :meth:`available_data` with
-            ``calibration_status`` "failed" and the reason in
-            ``calibration_error``.
+            (422); the catalog has scanned the day and it cannot be calibrated,
+            e.g. it has no trades (422, with the reason); or the calibration
+            service is unreachable (503). A day that is queued and then fails
+            shows up in :meth:`available_data` with ``calibration_status``
+            "failed" and the reason in ``calibration_error``.
 
         See Also
         --------

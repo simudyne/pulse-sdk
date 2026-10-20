@@ -141,6 +141,20 @@ class TestDataResource:
         with pytest.raises(TypeError):
             DataResource(FakeClient([{}])).available_data(include_calibration_state=True)
 
+    def test_false_flags_are_omitted_true_ones_sent(self):
+        client = FakeClient([{}, {}])
+        DataResource(client).available_data(symbol="700")
+        DataResource(client).available_data(symbol="700", include_stats=True, scanned_only=True)
+        assert client.calls[0][2]["params"] == {"symbol": "700"}
+        assert client.calls[1][2]["params"] == {"symbol": "700", "include_stats": True, "scanned_only": True}
+
+    def test_calibratable_false_is_sent(self):
+        # calibratable is tri-state: False asks for the days that CANNOT be
+        # calibrated, so it must reach the server rather than read as unset.
+        client = FakeClient([{}])
+        DataResource(client).available_data(calibratable=False)
+        assert client.calls[0][2]["params"] == {"calibratable": False}
+
     def test_both_calls_take_the_same_filters(self):
         import inspect
         available = set(inspect.signature(DataResource.available_data).parameters)
@@ -155,6 +169,7 @@ class TestDataResource:
             assert "{filters}" not in method.__doc__ and "{rows}" not in method.__doc__
             assert "calibration_status : " in method.__doc__
             assert "calibration_error" in method.__doc__
+            assert "calibratable : bool" in method.__doc__
 
     def test_calibrated_data_path(self):
         client = FakeClient([{}])
