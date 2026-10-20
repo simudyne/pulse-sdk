@@ -9,11 +9,91 @@ Reached as ``client.data``. The three calls are one story:
 
 A foundation-model run is prompted from anything in ``available_data``; an
 agent-based run needs the day to appear in ``calibrated_data`` first.
+
+``available_data`` and ``calibrated_data`` take the same filters and return the
+same rows; the only difference is that the second keeps calibrated days only.
 """
 
 AVAILABLE_DATA_PATH = "/data/available-data"
 CALIBRATED_DATA_PATH = "/data/calibrated-data"
 CALIBRATE_PATH = "/data/calibrate"
+
+_FILTERS_DOC = """
+        symbol : str, optional
+            Exact symbol, e.g. "700" or "TSCO".
+        q : str, optional
+            Case-insensitive substring match over the symbol (and, for
+            calibrated days, the company name).
+        provider : str, optional
+            Data provider, e.g. "omd" or "bmll".
+        exchange : str, optional
+            Exchange protocol, e.g. "lse" or "hkex_securities".
+        date : str, optional
+            One trading date "YYYY-MM-DD". Keeps only instruments with that
+            day, and returns only that day. Not with ``date_from``/``date_to``.
+        date_from, date_to : str, optional
+            A date range "YYYY-MM-DD", inclusive.
+        calibration_status : {"calibrated", "failed", "in_progress"}, optional
+            Days whose LATEST calibration record says this. ``failed`` covers a
+            failure at any stage; the reason is in ``calibration_error``.
+        min_trades, max_trades, min_messages, max_messages, min_volume,
+        max_volume, min_spread_ticks, max_spread_ticks : number, optional
+            Bounds on a scanned day's measured stats. Demo tier.
+        tick_size, lot_size : float, optional
+            Scanned days with exactly this tick or lot size. Demo tier.
+        currency, instrument_type : str, optional
+            Scanned days in this currency (e.g. "GBp") or of this type
+            (e.g. "equity"). Demo tier.
+        calibratable : bool, optional
+            Scanned days that can (True) or cannot (False) be calibrated: a
+            day needs at least one trade and fewer than 10,000,000 messages.
+            Demo tier.
+        scanned_only : bool, default False
+            Only days the catalog has scanned. Demo tier.
+        include_stats : bool, default False
+            Add each scanned day's measured ``stats``. Demo tier; ``None`` on
+            every other tier.
+"""
+
+_ROWS_DOC = """
+            ``{total, limit, offset, symbols}``, paged by instrument
+            (symbol, provider, exchange) so an instrument's dates are never
+            truncated; ``total`` is the match count before paging. Each
+            instrument has:
+
+            - symbol, provider, exchange
+            - company_name, instrument_type, currency, tick_size, lot_size
+            - date_count, calibrated_count, first_date, last_date
+            - avg_number_of_msgs, avg_volume_traded: over its calibrated days
+            - dates (list of dict), one per day:
+
+              - date (str), calibrated (bool)
+              - calibration_status: "calibrated", "failed", "in_progress", or
+                None if the day was never put through calibration, from the
+                day's LATEST calibration record
+              - calibration_stage, calibration_error, calibration_updated_at,
+                pulse_version, number_of_msgs, volume_traded, reference_price
+              - scanned, calibratable, not_calibratable_reason, event_counts,
+                stats: figures from the vendor data, demo tier only (None on
+                every other tier)
+
+            Filtering on a demo-tier field from another tier raises 403 rather
+            than returning an unfiltered answer.
+"""
+
+
+#: On/off flags whose False is the server's default, so False is not sent.
+#: (calibratable is not one: False asks for the days that CANNOT be calibrated.)
+_DEFAULT_OFF_FLAGS = ("scanned_only", "include_stats")
+
+
+def _day_params(**filters) -> dict | None:
+    """Query parameters for either catalog call, without unset filters."""
+    params = {
+        k: v for k, v in filters.items()
+        if v is not None and not (k in _DEFAULT_OFF_FLAGS and v is False)
+    }
+    return params or None
 
 
 class DataResource:
@@ -27,7 +107,7 @@ class DataResource:
     --------
     >>> catalog = client.data.calibrated_data(exchange="hkex_securities")
     >>> for instrument in catalog["symbols"][:3]:
-    ...     print(instrument["symbol"], instrument["available_dates"][:2])
+    ...     print(instrument["symbol"], [d["date"] for d in instrument["dates"][:2]])
     """
 
     def __init__(self, client):
@@ -41,21 +121,38 @@ class DataResource:
         provider: str | None = None,
         exchange: str | None = None,
         date: str | None = None,
-        include_calibration_state: bool = False,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        calibration_status: str | None = None,
+        min_trades: int | None = None,
+        max_trades: int | None = None,
+        min_messages: int | None = None,
+        max_messages: int | None = None,
+        min_volume: float | None = None,
+        max_volume: float | None = None,
+        min_spread_ticks: float | None = None,
+        max_spread_ticks: float | None = None,
+        tick_size: float | None = None,
+        lot_size: float | None = None,
+        currency: str | None = None,
+        instrument_type: str | None = None,
+        calibratable: bool | None = None,
+        scanned_only: bool = False,
+        include_stats: bool = False,
         limit: int | None = None,
         offset: int | None = None,
     ):
-        """Every symbol-day in the data registry: what EXISTS.
+        """Every symbol-day in the data registry: what EXISTS, with its
+        calibration state.
 
         The raw-data catalogue, so it answers both "what can a foundation model
-        be prompted with?" and "what could I calibrate?". Its counterpart is
-        :meth:`calibrated_data`, which lists only the days the agent-based
-        pipeline has already processed.
+        be prompted with?" and "what could I calibrate?". :meth:`calibrated_data`
+        takes the same filters and returns the same rows, restricted to
+        calibrated days.
 
-        Every filter is applied in the database. The catalogue holds the whole
-        vendor universe (~15k symbols) and is never returned whole, so page
-        through it with ``limit`` and ``offset`` rather than asking for all of
-        it.
+        The catalogue holds the whole vendor universe (~15k symbols) and is
+        never returned whole, so narrow it with filters and page through it
+        with ``limit`` and ``offset``.
 
         Parameters
         ----------
@@ -67,52 +164,27 @@ class DataResource:
             ``engine="fm"``. A ``production_name`` (e.g. "flow-hkex-1-100M")
             works too, matched as on ``run``. An unknown model raises (404),
             and a name matching more than one model raises (400).
-        symbol : str, optional
-            Exact symbol, e.g. "700" or "TSCO".
-        q : str, optional
-            Case-insensitive substring match over the symbol.
-        provider : str, optional
-            Data provider, e.g. "omd" or "bmll". Narrows further within
-            ``model_id``'s markets when both are given.
-        exchange : str, optional
-            Exchange protocol, e.g. "lse" or "hkex_securities".
-        date : str, optional
-            Trading date "YYYY-MM-DD". Keeps only symbols with data on that
-            day, and returns only that day.
-        include_calibration_state : bool, default False
-            Also return ``calibrated_dates`` and ``calibrated_count`` per
-            symbol — which of its days the agent-based model has already
-            calibrated. Costs a second query, so it is off by default; it means
-            nothing to a foundation model.
+        {filters}
         limit : int, optional
-            Max symbols to return (1-200, default 50).
+            Max instruments to return (1-200, default 50).
         offset : int, optional
-            Symbols to skip, for paging alongside ``limit``.
+            Instruments to skip, for paging alongside ``limit``.
 
         Returns
         -------
         dict
-            ``{total, limit, offset, symbols}``, paged by symbol identity
-            rather than by row so a symbol's dates are never truncated.
-            ``total`` is the match count before paging. Each symbol has:
-
-            - symbol (str): the ticker, e.g. "700"
-            - provider (str), exchange (str): the market it came from
-            - dates (list of str): trading days present, "YYYY-MM-DD"
-            - calibrated_dates (list of str), calibrated_count (int): only
-              with ``include_calibration_state``
-
-            ``dates`` is always a list of strings, with or without calibration
-            state, so a caller never branches on the shape of the response.
+        {rows}
 
         Raises
         ------
         PulseAPIError
-            If the key is not pro or demo tier (403); ``model_id`` names a
-            model that is not registered (404) or matches more than one
-            (400); ``date`` is not ``YYYY-MM-DD``, ``limit`` is outside
-            1-200 or ``offset`` is negative (422); or, with ``model_id``, the
-            model registry (pulse-orchestrator) could not be reached (502).
+            If the key is not pro or demo tier (403), or filters on a demo-tier
+            field from another tier (403); ``model_id`` names a model that is
+            not registered (404) or matches more than one (400); a date is not
+            ``YYYY-MM-DD``, ``date`` is combined with a range, ``limit`` is
+            outside 1-200 or ``offset`` is negative (422); or, with
+            ``model_id``, the model registry (pulse-orchestrator) could not be
+            reached (502).
 
         See Also
         --------
@@ -131,32 +203,37 @@ class DataResource:
 
         >>> page = client.data.available_data(model_id="pulse-lob-1", limit=20)
         >>> first = page["symbols"][0]
-        >>> first["symbol"], first["dates"][:2]
+        >>> first["symbol"], [d["date"] for d in first["dates"][:2]]
         ('AZN', ['2026-06-22', '2026-06-23'])
 
-        Which of a symbol's days are already calibrated:
+        Which of a symbol's days are calibrated, and why the others failed:
+
+        >>> entry = client.data.available_data(symbol="700")["symbols"][0]
+        >>> entry["date_count"], entry["calibrated_count"]
+        (60, 4)
+        >>> [(d["date"], d["calibration_error"]) for d in entry["dates"]
+        ...  if d["calibration_status"] == "failed"]
+
+        Days that can be calibrated but are not yet (demo tier):
 
         >>> page = client.data.available_data(
-        ...     symbol="700", include_calibration_state=True,
+        ...     exchange="lse", date_from="2025-07-01", date_to="2025-07-31",
+        ...     calibratable=True,
         ... )
-        >>> entry = page["symbols"][0]
-        >>> len(entry["dates"]), entry["calibrated_count"]
-        (60, 4)
         """
-        params = {
-            k: v for k, v in {
-                "model_id": model_id,
-                "symbol": symbol,
-                "q": q,
-                "provider": provider,
-                "exchange": exchange,
-                "date": date,
-                "include_calibration_state": include_calibration_state or None,
-                "limit": limit,
-                "offset": offset,
-            }.items() if v is not None
-        }
-        return self._client._request("GET", AVAILABLE_DATA_PATH, params=params or None)
+        return self._client._request("GET", AVAILABLE_DATA_PATH, params=_day_params(
+            model_id=model_id, symbol=symbol, q=q, provider=provider, exchange=exchange,
+            date=date, date_from=date_from, date_to=date_to,
+            calibration_status=calibration_status,
+            min_trades=min_trades, max_trades=max_trades,
+            min_messages=min_messages, max_messages=max_messages,
+            min_volume=min_volume, max_volume=max_volume,
+            min_spread_ticks=min_spread_ticks, max_spread_ticks=max_spread_ticks,
+            tick_size=tick_size, lot_size=lot_size,
+            currency=currency, instrument_type=instrument_type,
+            calibratable=calibratable, scanned_only=scanned_only,
+            include_stats=include_stats, limit=limit, offset=offset,
+        ))
 
     def calibrated_data(
         self,
@@ -165,31 +242,39 @@ class DataResource:
         provider: str | None = None,
         date: str | None = None,
         q: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        min_trades: int | None = None,
+        max_trades: int | None = None,
+        min_messages: int | None = None,
+        max_messages: int | None = None,
+        min_volume: float | None = None,
+        max_volume: float | None = None,
+        min_spread_ticks: float | None = None,
+        max_spread_ticks: float | None = None,
+        tick_size: float | None = None,
+        lot_size: float | None = None,
+        currency: str | None = None,
+        instrument_type: str | None = None,
+        calibratable: bool | None = None,
+        scanned_only: bool = False,
+        include_stats: bool = False,
         limit: int | None = None,
         offset: int | None = None,
     ):
         """Symbol-days the agent-based model can simulate: what is CALIBRATED.
 
-        Every entry is a valid ``symbol`` / ``provider`` / ``exchange`` /
+        A day is calibrated when its LATEST calibration record is a complete
+        model calibration, so a later failed re-run takes it out. Every day
+        here is a valid ``symbol`` / ``provider`` / ``exchange`` /
         ``cal_date`` for
         :meth:`~simudyne.resources.simulation.SimulationResource.run` with
-        ``engine="abm"``. A day that exists but has never been calibrated
-        appears in :meth:`available_data` and not here; :meth:`calibrate` is
-        what moves it across.
+        ``engine="abm"``. Same filters and same rows as :meth:`available_data`;
+        :meth:`calibrate` is what moves a day from there to here.
 
         Parameters
         ----------
-        symbol : str, optional
-            Exact symbol, e.g. "700.HK".
-        exchange : str, optional
-            Exchange protocol, e.g. "hkex_securities".
-        provider : str, optional
-            Data provider, e.g. "omd" or "bmll".
-        date : str, optional
-            Calibration date "YYYY-MM-DD". Keeps only instruments calibrated
-            on that date, and narrows each one's ``available_dates`` to it.
-        q : str, optional
-            Case-insensitive substring match over ticker and company name.
+        {filters}
         limit : int, optional
             Max instruments to return, 1-1000. Omitted, the whole calibrated
             catalogue comes back — it is far smaller than the registry.
@@ -199,27 +284,14 @@ class DataResource:
         Returns
         -------
         dict
-            ``{total, limit, offset, symbols}``, the same envelope as
-            :meth:`available_data`, paged by instrument. Each entry has:
-
-            - symbol (str): the ticker, e.g. "700.HK"
-            - company_name (str or None): the issuer's name where the vendor
-              reports one
-            - provider (str), exchange (str): the market it came from
-            - instrument_type, currency, tick_size, lot_size
-            - available_dates (list of dict): one per calibrated day, each with
-              ``date``, ``status``, ``stage``, ``number_of_msgs``,
-              ``volume_traded`` and ``reference_price``. Any ``date`` here is a
-              valid ``cal_date`` to run against
-            - avg_number_of_msgs, avg_volume_traded: averaged over the dates
-              returned, so a ``date`` filter narrows them too
+        {rows}
 
         Raises
         ------
         PulseAPIError
-            If ``limit`` is outside 1-1000 or ``offset`` is negative (422).
-            Available on every tier. A malformed ``date`` is not rejected:
-            it simply matches nothing, and ``total`` comes back 0.
+            If a filter on a demo-tier field comes from another tier (403), or
+            a date is not ``YYYY-MM-DD``, ``limit`` is outside 1-1000 or
+            ``offset`` is negative (422). Available on every tier.
 
         See Also
         --------
@@ -236,7 +308,7 @@ class DataResource:
         One instrument, to see which dates it can be run for:
 
         >>> hits = client.data.calibrated_data(symbol="700.HK")
-        >>> [d["date"] for d in hits["symbols"][0]["available_dates"]]
+        >>> [d["date"] for d in hits["symbols"][0]["dates"]]
         ['2025-09-01', '2025-09-02', '2025-09-03']
 
         Everything calibrated on one date, the usual way to pick a date that is
@@ -248,18 +320,27 @@ class DataResource:
 
         >>> page = client.data.calibrated_data(q="tencent", limit=10)
         """
-        params = {
-            k: v for k, v in {
-                "symbol": symbol,
-                "exchange": exchange,
-                "provider": provider,
-                "date": date,
-                "q": q,
-                "limit": limit,
-                "offset": offset,
-            }.items() if v is not None
-        }
-        return self._client._request("GET", CALIBRATED_DATA_PATH, params=params or None)
+        return self._client._request("GET", CALIBRATED_DATA_PATH, params=_day_params(
+            symbol=symbol, q=q, provider=provider, exchange=exchange,
+            date=date, date_from=date_from, date_to=date_to,
+            min_trades=min_trades, max_trades=max_trades,
+            min_messages=min_messages, max_messages=max_messages,
+            min_volume=min_volume, max_volume=max_volume,
+            min_spread_ticks=min_spread_ticks, max_spread_ticks=max_spread_ticks,
+            tick_size=tick_size, lot_size=lot_size,
+            currency=currency, instrument_type=instrument_type,
+            calibratable=calibratable, scanned_only=scanned_only,
+            include_stats=include_stats, limit=limit, offset=offset,
+        ))
+
+    # The two calls share their filters and row shape, so their docs share the
+    # text too. (Docstrings are None under python -OO.)
+    for _method in (available_data, calibrated_data):
+        if _method.__doc__:
+            _method.__doc__ = _method.__doc__.replace(
+                "{filters}", _FILTERS_DOC.strip("\n").lstrip()
+            ).replace("{rows}", _ROWS_DOC.strip("\n").lstrip())
+    del _method
 
     def calibrate(
         self,
@@ -309,18 +390,19 @@ class DataResource:
             cal_date : str
                 The date as submitted.
 
-            There is no job id: progress is not pollable through the API.
-            Watch :meth:`calibrated_data` for the day to appear.
+            There is no job id. Follow the day in :meth:`available_data`:
+            its ``calibration_status`` goes to "calibrated" when the pipeline
+            finishes, or to "failed" with the reason in ``calibration_error``.
 
         Raises
         ------
         PulseAPIError
-            If the key is not demo tier (403), ``provider`` or ``exchange``
-            is not a recognised value (422), or the calibration service is
-            unreachable (503). Missing raw market data for the symbol-day is
-            not detected here: the job is queued and fails later in the
-            pipeline, so the day simply never appears in
-            :meth:`calibrated_data`.
+            If the key is not demo tier (403); ``provider`` or ``exchange`` is
+            not a recognised value (422); the day has no market data — a
+            weekend, an exchange holiday, a day the vendor did not deliver
+            (422); the catalog has scanned the day and it cannot be calibrated,
+            e.g. it has no trades (422, with the reason); or the calibration
+            service is unreachable (503).
 
         See Also
         --------

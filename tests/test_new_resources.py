@@ -123,12 +123,33 @@ class TestDataResource:
         assert path == "/data/available-data"
         assert kwargs["params"] == {"model_id": "tradefm-hkex", "limit": 5}
 
-    def test_calibration_state_is_opt_in(self):
+    def test_false_flags_are_omitted_true_ones_sent(self):
         client = FakeClient([{}, {}])
         DataResource(client).available_data(symbol="700")
-        DataResource(client).available_data(symbol="700", include_calibration_state=True)
-        assert "include_calibration_state" not in client.calls[0][2]["params"]
-        assert client.calls[1][2]["params"]["include_calibration_state"] is True
+        DataResource(client).available_data(symbol="700", include_stats=True, scanned_only=True)
+        assert client.calls[0][2]["params"] == {"symbol": "700"}
+        assert client.calls[1][2]["params"] == {"symbol": "700", "include_stats": True, "scanned_only": True}
+
+    def test_calibratable_false_is_sent(self):
+        # calibratable is tri-state: False asks for the days that CANNOT be
+        # calibrated, so it must reach the server rather than read as unset.
+        client = FakeClient([{}])
+        DataResource(client).available_data(calibratable=False)
+        assert client.calls[0][2]["params"] == {"calibratable": False}
+
+    def test_both_calls_take_the_same_filters(self):
+        import inspect
+        available = set(inspect.signature(DataResource.available_data).parameters)
+        calibrated = set(inspect.signature(DataResource.calibrated_data).parameters)
+        # available_data alone has model_id and calibration_status (every
+        # calibrated_data day is calibrated by definition).
+        assert available - calibrated == {"model_id", "calibration_status"}
+        assert calibrated - available == set()
+
+    def test_shared_docs_are_filled_in(self):
+        for method in (DataResource.available_data, DataResource.calibrated_data):
+            assert "{filters}" not in method.__doc__ and "{rows}" not in method.__doc__
+            assert "calibratable : bool" in method.__doc__
 
     def test_calibrated_data_path(self):
         client = FakeClient([{}])
