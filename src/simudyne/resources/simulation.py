@@ -1077,10 +1077,12 @@ class SimulationResource:
               severity_basis
             - features (dict): the type's measurements
             - checks (list of dict): every rule applied, each ``{label,
-              value, rule, passed, basis, source}``; ``basis`` is "doc" (an
-              enforcement case or study gives the figure), "default"
-              (Pulse's calibration) or None for context rows, ``source`` a
-              short citation
+              value, rule, passed, basis, source}``; ``basis`` is "doc" (a
+              qualifying source states the figure: legislation, official
+              guidance, a final enforcement finding, or a peer-reviewed
+              article in its published version), "default" (Pulse's
+              calibration, including figures derived from a source) or
+              None for context rows, ``source`` a short citation
             - order_ids (list of str): for an order-level type
               (spoofing_like, layering, ping_orders, advancing_bid, smoking,
               auction_cancel, wash_trade, painting_tape) the orders behind
