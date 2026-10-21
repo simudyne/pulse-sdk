@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.4 (2026-10-21)
+
+### Bug Fixes
+
+- **deps**: Pin pip 26.2.2, uv 0.13.4 and certifi>=2026.10.19
+  ([`cf16f74`](https://github.com/simudyne/pulse-sdk/commit/cf16f74deb6faefacce64676c8708cac3c575acc))
+
+- Require certifi>=2026.10.19 - Upgrade pip to 26.2.2 and certifi in the test and release workflows
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v0.9.0-dev.3 (2026-10-13)
 
 ### Bug Fixes
