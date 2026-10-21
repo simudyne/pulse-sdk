@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: pip install "pip==26.2.2" "certifi>=2026.10.19" -e ".[test]"
 
       - name: Run tests
         run: pytest tests/

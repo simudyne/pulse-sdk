@@ -29,7 +29,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install python-semantic-release
+        run: pip install "pip==26.2.2" "certifi>=2026.10.19" python-semantic-release
 
       - name: Run semantic-release
         id: release
