@@ -1278,8 +1278,6 @@ class SimulationResource:
               Amend
             - side (str): Buy or Sell
             - symbol (str)
-            - status (str): "released" or "skipped"
-            - skip_reason (str): why the row was skipped; empty if released
             - t_scheduled (str): exchange-local ISO time with ms
             - t_placed (str): ISO time, empty if never placed
             - price_placed (float or None): price units; None for market
@@ -1295,8 +1293,10 @@ class SimulationResource:
               "not_placed", "applied" (amend/cancel rows) or "skipped"
             - end_reason (str): "lifetime", "cancel_row",
               "cancel_on_fill:<target ref>", "peg_limit", "end_of_day",
-              "no_valid_book", "elected" (a stop elected; its child order's
-              outcome is on the same row) or ""
+              "no_valid_book", "outside_hours", "run_ended", "elected" (a stop
+              elected; its child order's outcome is on the same row) or "";
+              for a skipped row (end "skipped") the reason text, e.g.
+              "column PEG_LIMIT: applies only to pegged Limit orders"
             - t_end (str): ISO time, empty if none
 
         Raises
@@ -1315,8 +1315,8 @@ class SimulationResource:
         --------
         >>> rows = client.simulation.get_sim_schedule_report(sim_id)
         >>> for r in rows:
-        ...     if r["status"] == "skipped":
-        ...         print(r["line"], r["ref"], r["skip_reason"])
+        ...     if r["end"] == "skipped":
+        ...         print(r["line"], r["ref"], r["end_reason"])
         """
         report = self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/schedule-report")
         return report.get("rows", []) if isinstance(report, dict) else report
