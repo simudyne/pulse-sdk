@@ -18,6 +18,7 @@ Calibration is not here — it is a data operation, at
 """
 
 import io
+from pathlib import Path
 
 
 RUN_PATH = "/simulation/run"
@@ -78,6 +79,29 @@ SCENARIO_DEFAULTS = {
     },
 }
 
+
+
+def _csv_text(value) -> str:
+    """``rows_csv`` as CSV text: text as given, a ``.csv`` path (str or
+    Path) read from disk, a polars or pandas DataFrame written without its
+    index (missing values as empty cells)."""
+    if isinstance(value, Path) or (
+        isinstance(value, str) and "\n" not in value and value.strip().lower().endswith(".csv")
+    ):
+        path = Path(value).expanduser()
+        if not path.is_file():
+            raise ValueError(f"rows_csv: no such file {str(path)!r}")
+        return path.read_text(encoding="utf-8-sig")
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "write_csv"):  # polars
+        return value.write_csv()
+    if hasattr(value, "to_csv"):  # pandas
+        return value.to_csv(index=False)
+    raise TypeError(
+        "rows_csv must be CSV text, a path to a .csv file, or a pandas / polars DataFrame, "
+        f"not {type(value).__name__}"
+    )
 
 class SimulationResource:
     """Run agent-based market simulations and read their results.
@@ -229,10 +253,55 @@ class SimulationResource:
             - horizon: execution window in SECONDS, e.g. 3600 (required)
             - start_time: e.g. "09:30:00" (optional, defaults to market open)
 
-            For CSS (custom static schedule):
+            For a custom schedule of individual orders:
 
-            - type: "css" (required)
-            - orders: dict mapping timestamps to quantities (required)
+            - type: "order_schedule" (required). It replaces ``"css"``, which
+              is refused (422); a list of market orders is now rows with
+              ``order_type`` "market", one order per row. There is no
+              schedule-level ``side``: each row carries its own, and a
+              ``side`` on the algo is a 422.
+            - rows: a list of individual orders, each a dict with
+              ``time`` (exchange-local, to the millisecond), ``ref`` (unique
+              per order; no "," or "#"), ``order_type`` ("market", "limit",
+              "ioc", "cancel", "stop", "stop_limit" or "amend"), ``side``
+              ("buy"/"sell") and ``size`` (lots). Optional: ``price_ref``
+              ("near", "far" or "mid") and ``offset_ticks`` (positive = less
+              aggressive), ``peg``, ``peg_limit_ticks``, ``peak``,
+              ``peak_random_pct``, ``lifetime_s``, ``stop_offset_ticks``.
+              ``peg_limit_ticks`` (>= 0, pegged limit orders only) gives a peg
+              a limit: its reference when entered, moved that many ticks in
+              the aggressive direction. While the reference is past the limit
+              the order is pulled; it comes back at the back of the queue, as
+              ``<ref>#<n>``, when the reference returns (LSE MIT201 6.1).
+              A ``cancel`` row names an earlier ``ref``. An ``amend`` row
+              names an earlier limit or stop_limit ``ref`` that no earlier
+              row cancels, and gives a new price (``price_ref`` and
+              ``offset_ticks``, priced at the amend time), a new remaining
+              visible ``size``, or both. A price change loses queue
+              priority, a size change alone keeps it, and an amend of an
+              order that has already filled or been cancelled does nothing.
+              A price amend of a pegged order is a 422. A ``ref`` of the form
+              ``<role>-<n>`` (e.g. "spoof-3") names the order's role for
+              :meth:`get_sim_events`. Or
+            - rows_csv: the same rows as CSV, given as CSV text,
+              a path to a ``.csv`` file (str or ``pathlib.Path``), or a
+              pandas / polars DataFrame; the SDK sends CSV text. The header
+              names the columns used (the row keys above, any order); an
+              empty cell is a field not set; ``peg`` is 0/1/true/false.
+              Errors name the CSV line (header = line 1) and column, and the
+              run's schedule report (:meth:`get_sim_schedule_report`) refers
+              to the same lines. Give ``rows`` or ``rows_csv``, not both.
+
+            An ``order_schedule`` takes only ``rows`` or ``rows_csv``: any
+            other key (``side``, ``random_offset``, ...) is a 422. Its rows
+            run at exactly their times; ``random_offset`` is a TWAP / VWAP
+            option.
+
+            Execution metrics are for the side with the most volume; for a
+            two-sided schedule read the schedule report per order
+            (:meth:`get_sim_schedule_report`). With ``engine="fm"`` a
+            schedule must be market orders on one side only; anything else
+            is a 422 naming why.
 
             An FM job accepts at most one algo and needs a real market day —
             a testdata run cannot carry one.
@@ -279,8 +348,10 @@ class SimulationResource:
             ``exchange`` is not a recognised value; ``n_runs`` is below 1, or
             above 8 with ``engine="fm"``; ``engine="fm"`` without
             ``model_id``; or an ``exec_algos`` entry has a ``start_time``
-            that is not "HH:MM" / "HH:MM:SS" or a ``side`` that is not "buy"
-            or "sell".
+            that is not "HH:MM" / "HH:MM:SS", a ``type`` of ``"css"`` (replaced
+            by ``"order_schedule"``), or an ``order_schedule`` with a
+            key other than ``rows`` / ``rows_csv`` (such as ``side`` or
+            ``random_offset``) or with both ``rows`` and ``rows_csv``.
 
             If the named data is unusable (422). The market identity is checked
             against the catalogue before submission:
@@ -360,6 +431,38 @@ class SimulationResource:
         ...     }],
         ... )
 
+        A list of market orders, one row per order:
+
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-02",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     exec_algos=[{"type": "order_schedule", "rows": [
+        ...         {"time": "2025-09-02 10:00:00.000", "ref": "buy-1",
+        ...          "order_type": "market", "side": "buy", "size": 200},
+        ...         {"time": "2025-09-02 10:05:00.000", "ref": "buy-2",
+        ...          "order_type": "market", "side": "buy", "size": 200},
+        ...     ]}],
+        ... )
+
+        A schedule of individual orders as CSV (text, a .csv path or a
+        DataFrame):
+
+        >>> schedule = (
+        ...     "time,ref,order_type,side,size,price_ref,offset_ticks,lifetime_s\n"
+        ...     "2025-09-02 10:00:00.000,spoof-1,limit,buy,5000,near,2,4\n"
+        ...     "2025-09-02 10:00:01.500,genuine-1,market,sell,200,,,\n"
+        ... )
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-02",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     exec_algos=[{"type": "order_schedule", "rows_csv": schedule}],
+        ... )
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-02",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     exec_algos=[{"type": "order_schedule", "rows_csv": "my_schedule.csv"}],
+        ... )
+
         Both engines are polled and read identically:
 
         >>> import time
@@ -408,14 +511,13 @@ class SimulationResource:
 
     @staticmethod
     def _serialize_exec_algos(exec_algos: list) -> list:
-        """Convert pd.Series orders in CSS configs to JSON-serializable dicts."""
+        """Make schedule configs JSON: ``rows_csv`` (a path or a DataFrame)
+        becomes CSV text. Everything else is sent as given."""
         result = []
         for algo in exec_algos:
             algo = dict(algo)
-            if algo.get("type") == "css" and "orders" in algo:
-                orders = algo["orders"]
-                if hasattr(orders, "items"):
-                    algo["orders"] = {str(k): int(v) for k, v in orders.items()}
+            if "rows_csv" in algo:
+                algo["rows_csv"] = _csv_text(algo["rows_csv"])
             result.append(algo)
         return result
 
@@ -900,6 +1002,9 @@ class SimulationResource:
             - has_exec_schedule (bool): Whether exec_schedule.parquet exists
             - has_schedule_by_min (bool): Whether schedule_by_min.parquet exists
             - has_exec_results (bool): Whether exec_results.parquet exists
+            - has_schedule_report (bool): Whether schedule_report.parquet
+              exists (runs with an order schedule; see
+              :meth:`get_sim_schedule_report`)
 
         Raises
         ------
@@ -1017,6 +1122,231 @@ class SimulationResource:
         """
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/metrics")
 
+    def get_sim_events(self, sim_id: str):
+        """Market-quality events and source-backed manipulation patterns in one run.
+
+        Runs the same event detector the platform uses on real market data
+        over this run's order book. Computed on first request, then cached.
+
+        Types that run on any data: market quality (``liquidity_withdrawal``,
+        ``spread_blowout``, ``price_jump``, ``volume_burst``, ``cliff``,
+        ``auction``) and manipulation (``spoofing_like``, ``layering``,
+        ``quote_stuffing``, ``ping_orders``, ``advancing_bid``,
+        ``momentum_ignition``, ``smoking``, ``marking_close``,
+        ``auction_cancel``). Simulation only, because they need the account:
+        ``wash_trade`` and ``painting_tape``, plus the account form of
+        ``marking_close`` (``features["form"] == "account"``). The account is
+        the run's own scheduled orders, and these rules need the aggressor of
+        each trade (``aggressor_order_id`` on newer runs' TRADE rows); an
+        older run gets none of them.
+
+        Parameters
+        ----------
+        sim_id : str
+            The simulation ID (an agent-based run; foundation-model runs have
+            no order lifecycle to scan).
+
+        Returns
+        -------
+        dict
+            ``{"sim_id", "symbol", "date", "detector_version", "stats",
+            "events": [...]}``. Each event has:
+
+            - event_id (str): pass to :meth:`get_sim_event`
+            - type (str), side (str or None: "bid"/"ask", "buy"/"sell" for
+              marking_close, "up"/"down" for price moves)
+            - ts, ts_end, duration_ms, severity (0-100), score,
+              severity_basis
+            - features (dict): the type's measurements
+            - checks (list of dict): every rule applied, each ``{label,
+              value, rule, passed, basis, source}``; ``basis`` is "doc" (a
+              qualifying source states the figure: legislation, official
+              guidance, a final enforcement finding, or a peer-reviewed
+              article in its published version), "default" (Pulse's
+              calibration, including figures derived from a source) or
+              None for context rows, ``source`` a short citation
+            - order_ids (list of str): for an order-level type
+              (spoofing_like, layering, ping_orders, advancing_bid, smoking,
+              auction_cancel, wash_trade, painting_tape) the orders behind
+              the event; for a window-level type (quote_stuffing,
+              momentum_ignition, marking_close) the base refs of the
+              scheduled orders placed inside [ts, ts_end]
+            - thumb: a small normalised picture
+
+            An order from a schedule (``order_schedule``) keeps its row's
+            ``ref`` as its id, with ``#<k>`` added for an iceberg's later
+            peaks and a limited peg's re-entries. A ref is ``<role>-<n>``;
+            the role (spoof, layer, stuff, probe, advance, ignite, smoke,
+            close, wash, paint; anything else is genuine) names the type the
+            order was planted for, and a planted order is caught when an
+            event of that type lists its base ref (a layer is also caught by
+            spoofing_like).
+
+        Raises
+        ------
+        PulseAPIError
+            404 if ``sim_id`` is unknown or the run wrote no order book; 422
+            for a foundation-model run.
+
+        See Also
+        --------
+        get_sim_event : One event with its full signature picture.
+        get_sim_schedule_orders : The schedule's orders and the rules of
+            their roles measured on each.
+
+        Examples
+        --------
+        >>> events = client.simulation.get_sim_events(sim_id)["events"]
+        >>> spoofs = [e for e in events if e["type"] == "spoofing_like"]
+        >>> caught = {i.split("#")[0] for e in spoofs for i in e["order_ids"]}
+        """
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events")
+
+    def get_sim_event(self, sim_id: str, event_id: str):
+        """One event from :meth:`get_sim_events`, with its full signature picture.
+
+        The same fields as an event in :meth:`get_sim_events`, plus
+        ``signature``: a normalised depth picture around the event with
+        spread, imbalance and activity traces.
+        """
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/events/{event_id}")
+
+    def get_sim_schedule_orders(self, sim_id: str):
+        """Every order a schedule placed in one run, and how it measured
+        against the rules of its role.
+
+        Orders are the ones an ``order_schedule`` placed, found by
+        their ``ref`` (iceberg peaks and a limited peg's re-entries,
+        ``<ref>#<k>``, are folded into one order). Genuine orders are listed
+        too. A planted order that :meth:`get_sim_events` did not catch says
+        here which rule it failed. Computed with the events, then cached.
+
+        Parameters
+        ----------
+        sim_id : str
+            The simulation ID (an agent-based run).
+
+        Returns
+        -------
+        dict
+            ``{"thresholds", "orders"}``.
+
+            - thresholds (dict): the run's ``median_size``,
+              ``size_quantile``, ``size_floor``, ``small_size``, ``tick``,
+              ``aggressor_ids`` (whether the run records the aggressor of
+              each trade) and each role's parameters (``spoof``, ``layer``,
+              ``probe``, ``advance``, ``smoke``, ``wash``, ``paint``)
+            - orders (list of dict), each:
+
+              - ref (str), role (str): genuine, spoof, layer, stuff, probe,
+                advance, ignite, smoke, close, wash or paint
+              - side (str): "bid" or "ask"
+              - t_place, t_end, end: placed, and filled or cancelled;
+                ``end`` is "filled", "cancelled" or "open". An order that
+                filled on arrival is placed at its first fill.
+              - price, size, filled, peaks
+              - ticks_behind_touch, ticks_from_mid: where it rested when
+                placed
+              - tested_against (str or None): the event type its role is
+                planted for; None for genuine
+              - rules (dict): ``{rule_key: {label, value, need, passed,
+                basis, source}}``, that type's rules measured on the order;
+                empty for genuine orders and the window-level roles stuff,
+                ignite and close. On a run without aggressor ids, wash and
+                paint orders carry one rule, ``aggressor_ids``.
+              - meets_rules (bool or None): whether every rule passed; None
+                where ``rules`` is empty or the run has no aggressor ids
+              - amends (list of dict): ``{t, price, size}`` per amend the
+                schedule made to it
+
+        Raises
+        ------
+        PulseAPIError
+            404 if ``sim_id`` is unknown or the run wrote no order book; 422
+            for a foundation-model run.
+
+        See Also
+        --------
+        get_sim_events : The events that caught (or missed) these orders.
+
+        Examples
+        --------
+        >>> report = client.simulation.get_sim_schedule_orders(sim_id)
+        >>> for o in report["orders"]:
+        ...     if o["role"] == "spoof" and o["meets_rules"] is False:
+        ...         print(o["ref"], [r["label"] for r in o["rules"].values() if not r["passed"]])
+        """
+        return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/schedule-orders")
+
+    def get_sim_schedule_report(self, sim_id: str) -> list:
+        """The run's schedule report: what happened to each order schedule row.
+
+        One row per schedule row, written by the engine: whether the row was
+        released or skipped as invalid (and why), when and where it was
+        placed, and how it ended. The same data as
+        ``get_sim_data(sim_id, "schedule_report.parquet")``, as plain dicts.
+
+        Parameters
+        ----------
+        sim_id : str
+            The simulation ID (an agent-based run with an order schedule).
+
+        Returns
+        -------
+        list of dict
+            One dict per schedule row, in time order (rows with the same
+            time keep their file order), with these keys:
+
+            - line (int): 1-based CSV line, header = 1 (for rows given
+              inline, the row index)
+            - ref (str): the row's ORDER_ID
+            - ord_type (str): Limit, Market, IOC, Cancel, Stop, StopLimit or
+              Amend
+            - side (str): Buy or Sell
+            - symbol (str)
+            - t_scheduled (str): exchange-local ISO time with ms
+            - t_placed (str): ISO time, empty if never placed
+            - price_placed (float or None): price units; None for market
+              orders and orders never placed
+            - size (int): visible size
+            - total_size (int)
+            - engine_ids (str): ";"-joined engine order ids (ref, ref#2, ...)
+            - amends (int): amends applied
+            - repegs (int)
+            - filled_qty (int), avg_fill_price (float or None),
+              n_fills (int): from the trader's own execution reports
+            - end (str): "filled", "cancelled", "expired", "open_at_close",
+              "not_placed", "applied" (amend/cancel rows) or "skipped"
+            - end_reason (str): "lifetime", "cancel_row",
+              "cancel_on_fill:<target ref>", "peg_limit", "end_of_day",
+              "no_valid_book", "outside_hours", "run_ended", "elected" (a stop
+              elected; its child order's outcome is on the same row) or "";
+              for a skipped row (end "skipped") the reason text, e.g.
+              "column PEG_LIMIT: applies only to pegged Limit orders"
+            - t_end (str): ISO time, empty if none
+
+        Raises
+        ------
+        PulseAPIError
+            404 if ``sim_id`` is unknown, or the run has no report (it had no
+            schedule, or it predates the report).
+
+        See Also
+        --------
+        get_sim_data : ``exec_results.parquet`` counts the skipped rows
+            (``schedule_rows_skipped``, ``schedule_skip_reasons``).
+        get_job_logs : The engine log, with a line per skipped row.
+
+        Examples
+        --------
+        >>> rows = client.simulation.get_sim_schedule_report(sim_id)
+        >>> for r in rows:
+        ...     if r["end"] == "skipped":
+        ...         print(r["line"], r["ref"], r["end_reason"])
+        """
+        report = self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/schedule-report")
+        return report.get("rows", []) if isinstance(report, dict) else report
+
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """Download simulation data as a Polars DataFrame.
 
@@ -1039,7 +1369,15 @@ class SimulationResource:
             - "l2_by_second.parquet": L2 order book, 10 levels, per second
             - "exec_schedule.parquet": execution schedule, if an algo ran
             - "schedule_by_min.parquet": algo schedule by minute, if an algo ran
-            - "exec_results.parquet": execution cost metrics, if an algo ran
+            - "exec_results.parquet": execution cost metrics, if an algo ran.
+              One row; besides the cost columns it carries
+              ``schedule_rows_skipped`` (int, order schedule rows the engine
+              skipped as invalid, 0 if none) and ``schedule_skip_reasons``
+              (str, up to 5 reasons joined with " | ", "+N more" if more).
+              Runs that predate these columns do not have them: read them as
+              0 and "". :meth:`get_job_logs` has every skipped line.
+            - "schedule_report.parquet": one row per order schedule row, if
+              the run had a schedule (see :meth:`get_sim_schedule_report`)
 
         Returns
         -------
@@ -1049,7 +1387,7 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If ``filename`` is not one of the six names above (400);
+            If ``filename`` is not one of the seven names above (400);
             ``sim_id`` is unknown, or the file was not written by this run
             (404); or the free-tier download allowance is exhausted (429,
             raised at once: the allowance rolls over in hours, not seconds).

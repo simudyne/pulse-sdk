@@ -123,12 +123,33 @@ class TestDataResource:
         assert path == "/data/available-data"
         assert kwargs["params"] == {"model_id": "tradefm-hkex", "limit": 5}
 
-    def test_calibration_state_is_opt_in(self):
+    def test_false_flags_are_omitted_true_ones_sent(self):
         client = FakeClient([{}, {}])
         DataResource(client).available_data(symbol="700")
-        DataResource(client).available_data(symbol="700", include_calibration_state=True)
-        assert "include_calibration_state" not in client.calls[0][2]["params"]
-        assert client.calls[1][2]["params"]["include_calibration_state"] is True
+        DataResource(client).available_data(symbol="700", include_stats=True, scanned_only=True)
+        assert client.calls[0][2]["params"] == {"symbol": "700"}
+        assert client.calls[1][2]["params"] == {"symbol": "700", "include_stats": True, "scanned_only": True}
+
+    def test_calibratable_false_is_sent(self):
+        # calibratable is tri-state: False asks for the days that CANNOT be
+        # calibrated, so it must reach the server rather than read as unset.
+        client = FakeClient([{}])
+        DataResource(client).available_data(calibratable=False)
+        assert client.calls[0][2]["params"] == {"calibratable": False}
+
+    def test_both_calls_take_the_same_filters(self):
+        import inspect
+        available = set(inspect.signature(DataResource.available_data).parameters)
+        calibrated = set(inspect.signature(DataResource.calibrated_data).parameters)
+        # available_data alone has model_id and calibration_status (every
+        # calibrated_data day is calibrated by definition).
+        assert available - calibrated == {"model_id", "calibration_status"}
+        assert calibrated - available == set()
+
+    def test_shared_docs_are_filled_in(self):
+        for method in (DataResource.available_data, DataResource.calibrated_data):
+            assert "{filters}" not in method.__doc__ and "{rows}" not in method.__doc__
+            assert "calibratable : bool" in method.__doc__
 
     def test_calibrated_data_path(self):
         client = FakeClient([{}])
@@ -221,3 +242,91 @@ class TestSimulationAdditions:
         out = SimulationResource(client).get_job_logs("job-1")
         assert out == "engine log line"
         assert client.calls[0][1].endswith("/simulation/jobs/job-1/logs")
+
+
+class TestSimEvents:
+    def test_events_path(self):
+        client = FakeClient([{"events": []}])
+        SimulationResource(client).get_sim_events("a:b:c")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/events")
+
+    def test_event_path(self):
+        client = FakeClient([{}])
+        SimulationResource(client).get_sim_event("a:b:c", "ev1")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/events/ev1")
+
+    def test_schedule_orders_path(self):
+        client = FakeClient([{"thresholds": {}, "orders": []}])
+        out = SimulationResource(client).get_sim_schedule_orders("a:b:c")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/schedule-orders")
+        assert out == {"thresholds": {}, "orders": []}
+
+    def test_schedule_report_returns_rows(self):
+        rows = [{"line": 2, "ref": "genuine-1", "status": "released", "skip_reason": ""},
+                {"line": 3, "ref": "spoof-1", "status": "skipped", "skip_reason": "column SIZE: negative"}]
+        client = FakeClient([{"sim_id": "a:b:c", "n_rows": 2, "n_skipped": 1, "rows": rows}])
+        out = SimulationResource(client).get_sim_schedule_report("a:b:c")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/schedule-report")
+        assert out == rows
+
+    def test_order_schedule_rows_pass_through_unchanged(self):
+        rows = [{"time": "2025-09-02 10:00:00", "ref": "spoof-0", "order_type": "limit",
+                 "side": "buy", "size": 500, "price_ref": "near", "offset_ticks": 2, "lifetime_s": 4},
+                {"time": "2025-09-02 10:00:01", "ref": "genuine-0", "order_type": "market",
+                 "side": "sell", "size": 200}]
+        out = SimulationResource._serialize_exec_algos([{"type": "order_schedule", "rows": rows}])
+        assert out == [{"type": "order_schedule", "rows": rows}]
+
+    def test_no_orders_conversion(self):
+        # The time -> quantity "orders" form is gone; the SDK no longer
+        # rewrites it, so the API's 422 reaches the caller unchanged.
+        orders = {"2025-09-02 10:00:00": 100}
+        out = SimulationResource._serialize_exec_algos([{"type": "order_schedule", "orders": orders}])
+        assert out == [{"type": "order_schedule", "orders": orders}]
+
+
+class TestScheduleCsv:
+    CSV = ("time,ref,order_type,side,size,price_ref,offset_ticks,peg\n"
+           "2025-09-02 10:00:00,spoof-1,limit,buy,5000,near,2,\n"
+           "2025-09-02 10:00:01,genuine-1,limit,sell,200,mid,,true\n")
+
+    def _sent(self, rows_csv):
+        client = FakeClient([{"job_id": "j"}])
+        SimulationResource(client).run(symbol="700.HK", cal_date="2025-09-02", provider="omd",
+                                       exchange="hkex_securities", exec_algos=[{"type": "order_schedule", "rows_csv": rows_csv}])
+        algo = client.calls[0][2]["json"]["exec_algos"][0]
+        assert set(algo) == {"type", "rows_csv"}
+        return algo["rows_csv"]
+
+    def test_text_is_sent_as_is(self):
+        assert self._sent(self.CSV) == self.CSV
+
+    def test_path_str_and_path_are_read(self, tmp_path):
+        from pathlib import Path
+        f = tmp_path / "sched.csv"
+        f.write_text(self.CSV)
+        assert self._sent(str(f)) == self.CSV
+        assert self._sent(Path(f)) == self.CSV
+
+    def test_missing_file_is_refused_before_sending(self, tmp_path):
+        with pytest.raises(ValueError, match="no such file"):
+            SimulationResource._serialize_exec_algos([{"type": "order_schedule", "rows_csv": str(tmp_path / "nope.csv")}])
+
+    def test_polars_dataframe(self):
+        import polars as pl
+        df = pl.DataFrame({"time": ["2025-09-02 10:00:00", "2025-09-02 10:00:01"], "ref": ["spoof-1", "genuine-1"],
+                           "order_type": ["limit", "limit"], "side": ["buy", "sell"], "size": [5000, 200],
+                           "peg": [None, True]})
+        assert self._sent(df) == ("time,ref,order_type,side,size,peg\n"
+                                  "2025-09-02 10:00:00,spoof-1,limit,buy,5000,\n"
+                                  "2025-09-02 10:00:01,genuine-1,limit,sell,200,true\n")
+
+    def test_pandas_dataframe(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"time": ["2025-09-02 10:00:00"], "ref": ["spoof-1"], "order_type": ["limit"],
+                           "side": ["buy"], "size": [5000], "offset_ticks": [None]})
+        assert self._sent(df) == "time,ref,order_type,side,size,offset_ticks\n2025-09-02 10:00:00,spoof-1,limit,buy,5000,\n"
+
+    def test_other_types_are_refused(self):
+        with pytest.raises(TypeError, match="rows_csv must be"):
+            SimulationResource._serialize_exec_algos([{"type": "order_schedule", "rows_csv": [{"ref": "a"}]}])
