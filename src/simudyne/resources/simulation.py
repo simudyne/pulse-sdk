@@ -923,6 +923,9 @@ class SimulationResource:
             - has_exec_schedule (bool): Whether exec_schedule.parquet exists
             - has_schedule_by_min (bool): Whether schedule_by_min.parquet exists
             - has_exec_results (bool): Whether exec_results.parquet exists
+            - has_schedule_report (bool): Whether schedule_report.parquet
+              exists (runs with an order schedule; see
+              :meth:`get_sim_schedule_report`)
 
         Raises
         ------
@@ -1196,6 +1199,74 @@ class SimulationResource:
         """
         return self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/schedule-orders")
 
+    def get_sim_schedule_report(self, sim_id: str) -> list:
+        """The run's schedule report: what happened to each order schedule row.
+
+        One row per schedule row, written by the engine: whether the row was
+        released or skipped as invalid (and why), when and where it was
+        placed, and how it ended. The same data as
+        ``get_sim_data(sim_id, "schedule_report.parquet")``, as plain dicts.
+
+        Parameters
+        ----------
+        sim_id : str
+            The simulation ID (an agent-based run with an order schedule).
+
+        Returns
+        -------
+        list of dict
+            One dict per schedule row, in file order, with these keys:
+
+            - line (int): 1-based CSV line, header = 1 (for rows given
+              inline, the row index)
+            - ref (str): the row's ORDER_ID
+            - ord_type (str): Limit, Market, IOC, Cancel, Stop, StopLimit or
+              Amend
+            - side (str): Buy or Sell
+            - symbol (str)
+            - status (str): "released" or "skipped"
+            - skip_reason (str): why the row was skipped; empty if released
+            - t_scheduled (str): exchange-local ISO time with ms
+            - t_placed (str): ISO time, empty if never placed
+            - price_placed (float or None): price units; None for market
+              orders and orders never placed
+            - size (int): visible size
+            - total_size (int)
+            - engine_ids (str): ";"-joined engine order ids (ref, ref#2, ...)
+            - amends (int): amends applied
+            - repegs (int)
+            - filled_qty (int), avg_fill_price (float or None),
+              n_fills (int): from the trader's own execution reports
+            - end (str): "filled", "cancelled", "expired", "open_at_close",
+              "not_placed", "applied" (amend/cancel rows) or "skipped"
+            - end_reason (str): "lifetime", "cancel_row",
+              "cancel_on_fill:<target ref>", "peg_limit", "end_of_day",
+              "no_valid_book", "elected" (a stop elected; its child order's
+              outcome is on the same row) or ""
+            - t_end (str): ISO time, empty if none
+
+        Raises
+        ------
+        PulseAPIError
+            404 if ``sim_id`` is unknown, or the run has no report (it had no
+            schedule, or it predates the report).
+
+        See Also
+        --------
+        get_sim_data : ``exec_results.parquet`` counts the skipped rows
+            (``schedule_rows_skipped``, ``schedule_skip_reasons``).
+        get_job_logs : The engine log, with a line per skipped row.
+
+        Examples
+        --------
+        >>> rows = client.simulation.get_sim_schedule_report(sim_id)
+        >>> for r in rows:
+        ...     if r["status"] == "skipped":
+        ...         print(r["line"], r["ref"], r["skip_reason"])
+        """
+        report = self._client._request("GET", f"{RESULTS_PATH}/{sim_id}/schedule-report")
+        return report.get("rows", []) if isinstance(report, dict) else report
+
     def get_sim_data(self, sim_id: str, filename: str = "sim_data.parquet"):
         """Download simulation data as a Polars DataFrame.
 
@@ -1218,7 +1289,15 @@ class SimulationResource:
             - "l2_by_second.parquet": L2 order book, 10 levels, per second
             - "exec_schedule.parquet": execution schedule, if an algo ran
             - "schedule_by_min.parquet": algo schedule by minute, if an algo ran
-            - "exec_results.parquet": execution cost metrics, if an algo ran
+            - "exec_results.parquet": execution cost metrics, if an algo ran.
+              One row; besides the cost columns it carries
+              ``schedule_rows_skipped`` (int, order schedule rows the engine
+              skipped as invalid, 0 if none) and ``schedule_skip_reasons``
+              (str, up to 5 reasons joined with " | ", "+N more" if more).
+              Runs that predate these columns do not have them: read them as
+              0 and "". :meth:`get_job_logs` has every skipped line.
+            - "schedule_report.parquet": one row per order schedule row, if
+              the run had a schedule (see :meth:`get_sim_schedule_report`)
 
         Returns
         -------
@@ -1228,7 +1307,7 @@ class SimulationResource:
         Raises
         ------
         PulseAPIError
-            If ``filename`` is not one of the six names above (400);
+            If ``filename`` is not one of the seven names above (400);
             ``sim_id`` is unknown, or the file was not written by this run
             (404); or the free-tier download allowance is exhausted (429,
             raised at once: the allowance rolls over in hours, not seconds).

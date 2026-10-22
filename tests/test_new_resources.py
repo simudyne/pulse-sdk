@@ -261,6 +261,14 @@ class TestSimEvents:
         assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/schedule-orders")
         assert out == {"thresholds": {}, "orders": []}
 
+    def test_schedule_report_returns_rows(self):
+        rows = [{"line": 2, "ref": "genuine-1", "status": "released", "skip_reason": ""},
+                {"line": 3, "ref": "spoof-1", "status": "skipped", "skip_reason": "column SIZE: negative"}]
+        client = FakeClient([{"sim_id": "a:b:c", "n_rows": 2, "n_skipped": 1, "rows": rows}])
+        out = SimulationResource(client).get_sim_schedule_report("a:b:c")
+        assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/schedule-report")
+        assert out == rows
+
     def test_css_rows_pass_through_unchanged(self):
         rows = [{"time": "2025-09-02 10:00:00", "ref": "spoof-0", "order_type": "limit",
                  "side": "buy", "size": 500, "price_ref": "near", "offset_ticks": 2, "lifetime_s": 4}]
