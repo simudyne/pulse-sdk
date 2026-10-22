@@ -253,11 +253,14 @@ class SimulationResource:
             - horizon: execution window in SECONDS, e.g. 3600 (required)
             - start_time: e.g. "09:30:00" (optional, defaults to market open)
 
-            For CSS (custom static schedule), one of:
+            For a custom schedule of individual orders:
 
-            - type: "css" (required)
-            - orders: dict mapping timestamps to quantities, or
-            - rows (ABM only): a list of individual orders, each a dict with
+            - type: "order_schedule" (required). It replaces ``"css"``, which
+              is refused (422); a list of market orders is now rows with
+              ``order_type`` "market", one order per row. There is no
+              schedule-level ``side``: each row carries its own, and a
+              ``side`` on the algo is a 422.
+            - rows: a list of individual orders, each a dict with
               ``time`` (exchange-local, to the millisecond), ``ref`` (unique
               per order; no "," or "#"), ``order_type`` ("market", "limit",
               "ioc", "cancel", "stop", "stop_limit" or "amend"), ``side``
@@ -280,7 +283,7 @@ class SimulationResource:
               A price amend of a pegged order is a 422. A ``ref`` of the form
               ``<role>-<n>`` (e.g. "spoof-3") names the order's role for
               :meth:`get_sim_events`. Or
-            - rows_csv (ABM only): the same rows as CSV, given as CSV text,
+            - rows_csv: the same rows as CSV, given as CSV text,
               a path to a ``.csv`` file (str or ``pathlib.Path``), or a
               pandas / polars DataFrame; the SDK sends CSV text. The header
               names the columns used (the row keys above, any order); an
@@ -288,6 +291,12 @@ class SimulationResource:
               Errors name the CSV line (header = line 1) and column, and the
               run's schedule report (:meth:`get_sim_schedule_report`) refers
               to the same lines. Give ``rows`` or ``rows_csv``, not both.
+
+            Execution metrics are for the side with the most volume; for a
+            two-sided schedule read the schedule report per order
+            (:meth:`get_sim_schedule_report`). With ``engine="fm"`` a
+            schedule must be market orders on one side only; anything else
+            is a 422 naming why.
 
             An FM job accepts at most one algo and needs a real market day —
             a testdata run cannot carry one.
@@ -334,8 +343,9 @@ class SimulationResource:
             ``exchange`` is not a recognised value; ``n_runs`` is below 1, or
             above 8 with ``engine="fm"``; ``engine="fm"`` without
             ``model_id``; or an ``exec_algos`` entry has a ``start_time``
-            that is not "HH:MM" / "HH:MM:SS" or a ``side`` that is not "buy"
-            or "sell".
+            that is not "HH:MM" / "HH:MM:SS", a ``type`` of ``"css"`` (replaced
+            by ``"order_schedule"``), or an ``order_schedule`` with a
+            schedule-level ``side`` or with both ``rows`` and ``rows_csv``.
 
             If the named data is unusable (422). The market identity is checked
             against the catalogue before submission:
@@ -415,6 +425,19 @@ class SimulationResource:
         ...     }],
         ... )
 
+        A list of market orders, one row per order:
+
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-02",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     exec_algos=[{"type": "order_schedule", "rows": [
+        ...         {"time": "2025-09-02 10:00:00.000", "ref": "buy-1",
+        ...          "order_type": "market", "side": "buy", "size": 200},
+        ...         {"time": "2025-09-02 10:05:00.000", "ref": "buy-2",
+        ...          "order_type": "market", "side": "buy", "size": 200},
+        ...     ]}],
+        ... )
+
         A schedule of individual orders as CSV (text, a .csv path or a
         DataFrame):
 
@@ -426,12 +449,12 @@ class SimulationResource:
         >>> job = client.simulation.run(
         ...     symbol="700.HK", cal_date="2025-09-02",
         ...     provider="omd", exchange="hkex_securities",
-        ...     exec_algos=[{"type": "css", "rows_csv": schedule}],
+        ...     exec_algos=[{"type": "order_schedule", "rows_csv": schedule}],
         ... )
         >>> job = client.simulation.run(
         ...     symbol="700.HK", cal_date="2025-09-02",
         ...     provider="omd", exchange="hkex_securities",
-        ...     exec_algos=[{"type": "css", "rows_csv": "my_schedule.csv"}],
+        ...     exec_algos=[{"type": "order_schedule", "rows_csv": "my_schedule.csv"}],
         ... )
 
         Both engines are polled and read identically:
@@ -482,15 +505,11 @@ class SimulationResource:
 
     @staticmethod
     def _serialize_exec_algos(exec_algos: list) -> list:
-        """Make CSS configs JSON: pd.Series ``orders`` become dicts and
-        ``rows_csv`` (a path or a DataFrame) becomes CSV text."""
+        """Make schedule configs JSON: ``rows_csv`` (a path or a DataFrame)
+        becomes CSV text. Everything else is sent as given."""
         result = []
         for algo in exec_algos:
             algo = dict(algo)
-            if algo.get("type") == "css" and "orders" in algo:
-                orders = algo["orders"]
-                if hasattr(orders, "items"):
-                    algo["orders"] = {str(k): int(v) for k, v in orders.items()}
             if "rows_csv" in algo:
                 algo["rows_csv"] = _csv_text(algo["rows_csv"])
             result.append(algo)
@@ -1148,7 +1167,7 @@ class SimulationResource:
               scheduled orders placed inside [ts, ts_end]
             - thumb: a small normalised picture
 
-            An order from a schedule (``css`` with ``rows``) keeps its row's
+            An order from a schedule (``order_schedule``) keeps its row's
             ``ref`` as its id, with ``#<k>`` added for an iceberg's later
             peaks and a limited peg's re-entries. A ref is ``<role>-<n>``;
             the role (spoof, layer, stuff, probe, advance, ignite, smoke,
@@ -1190,7 +1209,7 @@ class SimulationResource:
         """Every order a schedule placed in one run, and how it measured
         against the rules of its role.
 
-        Orders are the ones a ``css`` schedule with ``rows`` placed, found by
+        Orders are the ones an ``order_schedule`` placed, found by
         their ``ref`` (iceberg peaks and a limited peg's re-entries,
         ``<ref>#<k>``, are folded into one order). Genuine orders are listed
         too. A planted order that :meth:`get_sim_events` did not catch says

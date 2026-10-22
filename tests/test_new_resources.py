@@ -269,11 +269,20 @@ class TestSimEvents:
         assert client.calls[0][:2] == ("GET", "/simulation/results/a:b:c/schedule-report")
         assert out == rows
 
-    def test_css_rows_pass_through_unchanged(self):
+    def test_order_schedule_rows_pass_through_unchanged(self):
         rows = [{"time": "2025-09-02 10:00:00", "ref": "spoof-0", "order_type": "limit",
-                 "side": "buy", "size": 500, "price_ref": "near", "offset_ticks": 2, "lifetime_s": 4}]
-        out = SimulationResource._serialize_exec_algos([{"type": "css", "side": "sell", "rows": rows}])
-        assert out == [{"type": "css", "side": "sell", "rows": rows}]
+                 "side": "buy", "size": 500, "price_ref": "near", "offset_ticks": 2, "lifetime_s": 4},
+                {"time": "2025-09-02 10:00:01", "ref": "genuine-0", "order_type": "market",
+                 "side": "sell", "size": 200}]
+        out = SimulationResource._serialize_exec_algos([{"type": "order_schedule", "rows": rows}])
+        assert out == [{"type": "order_schedule", "rows": rows}]
+
+    def test_no_orders_conversion(self):
+        # The time -> quantity "orders" form is gone; the SDK no longer
+        # rewrites it, so the API's 422 reaches the caller unchanged.
+        orders = {"2025-09-02 10:00:00": 100}
+        out = SimulationResource._serialize_exec_algos([{"type": "order_schedule", "orders": orders}])
+        assert out == [{"type": "order_schedule", "orders": orders}]
 
 
 class TestScheduleCsv:
@@ -284,7 +293,7 @@ class TestScheduleCsv:
     def _sent(self, rows_csv):
         client = FakeClient([{"job_id": "j"}])
         SimulationResource(client).run(symbol="700.HK", cal_date="2025-09-02", provider="omd",
-                                       exchange="hkex_securities", exec_algos=[{"type": "css", "rows_csv": rows_csv}])
+                                       exchange="hkex_securities", exec_algos=[{"type": "order_schedule", "rows_csv": rows_csv}])
         algo = client.calls[0][2]["json"]["exec_algos"][0]
         assert set(algo) == {"type", "rows_csv"}
         return algo["rows_csv"]
@@ -301,7 +310,7 @@ class TestScheduleCsv:
 
     def test_missing_file_is_refused_before_sending(self, tmp_path):
         with pytest.raises(ValueError, match="no such file"):
-            SimulationResource._serialize_exec_algos([{"type": "css", "rows_csv": str(tmp_path / "nope.csv")}])
+            SimulationResource._serialize_exec_algos([{"type": "order_schedule", "rows_csv": str(tmp_path / "nope.csv")}])
 
     def test_polars_dataframe(self):
         import polars as pl
@@ -320,4 +329,4 @@ class TestScheduleCsv:
 
     def test_other_types_are_refused(self):
         with pytest.raises(TypeError, match="rows_csv must be"):
-            SimulationResource._serialize_exec_algos([{"type": "css", "rows_csv": [{"ref": "a"}]}])
+            SimulationResource._serialize_exec_algos([{"type": "order_schedule", "rows_csv": [{"ref": "a"}]}])
