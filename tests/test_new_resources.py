@@ -274,3 +274,50 @@ class TestSimEvents:
                  "side": "buy", "size": 500, "price_ref": "near", "offset_ticks": 2, "lifetime_s": 4}]
         out = SimulationResource._serialize_exec_algos([{"type": "css", "side": "sell", "rows": rows}])
         assert out == [{"type": "css", "side": "sell", "rows": rows}]
+
+
+class TestScheduleCsv:
+    CSV = ("time,ref,order_type,side,size,price_ref,offset_ticks,peg\n"
+           "2025-09-02 10:00:00,spoof-1,limit,buy,5000,near,2,\n"
+           "2025-09-02 10:00:01,genuine-1,limit,sell,200,mid,,true\n")
+
+    def _sent(self, rows_csv):
+        client = FakeClient([{"job_id": "j"}])
+        SimulationResource(client).run(symbol="700.HK", cal_date="2025-09-02", provider="omd",
+                                       exchange="hkex_securities", exec_algos=[{"type": "css", "rows_csv": rows_csv}])
+        algo = client.calls[0][2]["json"]["exec_algos"][0]
+        assert set(algo) == {"type", "rows_csv"}
+        return algo["rows_csv"]
+
+    def test_text_is_sent_as_is(self):
+        assert self._sent(self.CSV) == self.CSV
+
+    def test_path_str_and_path_are_read(self, tmp_path):
+        from pathlib import Path
+        f = tmp_path / "sched.csv"
+        f.write_text(self.CSV)
+        assert self._sent(str(f)) == self.CSV
+        assert self._sent(Path(f)) == self.CSV
+
+    def test_missing_file_is_refused_before_sending(self, tmp_path):
+        with pytest.raises(ValueError, match="no such file"):
+            SimulationResource._serialize_exec_algos([{"type": "css", "rows_csv": str(tmp_path / "nope.csv")}])
+
+    def test_polars_dataframe(self):
+        import polars as pl
+        df = pl.DataFrame({"time": ["2025-09-02 10:00:00", "2025-09-02 10:00:01"], "ref": ["spoof-1", "genuine-1"],
+                           "order_type": ["limit", "limit"], "side": ["buy", "sell"], "size": [5000, 200],
+                           "peg": [None, True]})
+        assert self._sent(df) == ("time,ref,order_type,side,size,peg\n"
+                                  "2025-09-02 10:00:00,spoof-1,limit,buy,5000,\n"
+                                  "2025-09-02 10:00:01,genuine-1,limit,sell,200,true\n")
+
+    def test_pandas_dataframe(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"time": ["2025-09-02 10:00:00"], "ref": ["spoof-1"], "order_type": ["limit"],
+                           "side": ["buy"], "size": [5000], "offset_ticks": [None]})
+        assert self._sent(df) == "time,ref,order_type,side,size,offset_ticks\n2025-09-02 10:00:00,spoof-1,limit,buy,5000,\n"
+
+    def test_other_types_are_refused(self):
+        with pytest.raises(TypeError, match="rows_csv must be"):
+            SimulationResource._serialize_exec_algos([{"type": "css", "rows_csv": [{"ref": "a"}]}])

@@ -18,6 +18,7 @@ Calibration is not here — it is a data operation, at
 """
 
 import io
+from pathlib import Path
 
 
 RUN_PATH = "/simulation/run"
@@ -78,6 +79,29 @@ SCENARIO_DEFAULTS = {
     },
 }
 
+
+
+def _csv_text(value) -> str:
+    """``rows_csv`` as CSV text: text as given, a ``.csv`` path (str or
+    Path) read from disk, a polars or pandas DataFrame written without its
+    index (missing values as empty cells)."""
+    if isinstance(value, Path) or (
+        isinstance(value, str) and "\n" not in value and value.strip().lower().endswith(".csv")
+    ):
+        path = Path(value).expanduser()
+        if not path.is_file():
+            raise ValueError(f"rows_csv: no such file {str(path)!r}")
+        return path.read_text(encoding="utf-8-sig")
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "write_csv"):  # polars
+        return value.write_csv()
+    if hasattr(value, "to_csv"):  # pandas
+        return value.to_csv(index=False)
+    raise TypeError(
+        "rows_csv must be CSV text, a path to a .csv file, or a pandas / polars DataFrame, "
+        f"not {type(value).__name__}"
+    )
 
 class SimulationResource:
     """Run agent-based market simulations and read their results.
@@ -255,7 +279,15 @@ class SimulationResource:
               order that has already filled or been cancelled does nothing.
               A price amend of a pegged order is a 422. A ``ref`` of the form
               ``<role>-<n>`` (e.g. "spoof-3") names the order's role for
-              :meth:`get_sim_events`.
+              :meth:`get_sim_events`. Or
+            - rows_csv (ABM only): the same rows as CSV, given as CSV text,
+              a path to a ``.csv`` file (str or ``pathlib.Path``), or a
+              pandas / polars DataFrame; the SDK sends CSV text. The header
+              names the columns used (the row keys above, any order); an
+              empty cell is a field not set; ``peg`` is 0/1/true/false.
+              Errors name the CSV line (header = line 1) and column, and the
+              run's schedule report (:meth:`get_sim_schedule_report`) refers
+              to the same lines. Give ``rows`` or ``rows_csv``, not both.
 
             An FM job accepts at most one algo and needs a real market day —
             a testdata run cannot carry one.
@@ -383,6 +415,25 @@ class SimulationResource:
         ...     }],
         ... )
 
+        A schedule of individual orders as CSV (text, a .csv path or a
+        DataFrame):
+
+        >>> schedule = (
+        ...     "time,ref,order_type,side,size,price_ref,offset_ticks,lifetime_s\n"
+        ...     "2025-09-02 10:00:00.000,spoof-1,limit,buy,5000,near,2,4\n"
+        ...     "2025-09-02 10:00:01.500,genuine-1,market,sell,200,,,\n"
+        ... )
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-02",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     exec_algos=[{"type": "css", "rows_csv": schedule}],
+        ... )
+        >>> job = client.simulation.run(
+        ...     symbol="700.HK", cal_date="2025-09-02",
+        ...     provider="omd", exchange="hkex_securities",
+        ...     exec_algos=[{"type": "css", "rows_csv": "my_schedule.csv"}],
+        ... )
+
         Both engines are polled and read identically:
 
         >>> import time
@@ -431,7 +482,8 @@ class SimulationResource:
 
     @staticmethod
     def _serialize_exec_algos(exec_algos: list) -> list:
-        """Convert pd.Series orders in CSS configs to JSON-serializable dicts."""
+        """Make CSS configs JSON: pd.Series ``orders`` become dicts and
+        ``rows_csv`` (a path or a DataFrame) becomes CSV text."""
         result = []
         for algo in exec_algos:
             algo = dict(algo)
@@ -439,6 +491,8 @@ class SimulationResource:
                 orders = algo["orders"]
                 if hasattr(orders, "items"):
                     algo["orders"] = {str(k): int(v) for k, v in orders.items()}
+            if "rows_csv" in algo:
+                algo["rows_csv"] = _csv_text(algo["rows_csv"])
             result.append(algo)
         return result
 
