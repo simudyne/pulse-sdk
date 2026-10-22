@@ -292,6 +292,11 @@ class SimulationResource:
               run's schedule report (:meth:`get_sim_schedule_report`) refers
               to the same lines. Give ``rows`` or ``rows_csv``, not both.
 
+            An ``order_schedule`` takes only ``rows`` or ``rows_csv``: any
+            other key (``side``, ``random_offset``, ...) is a 422. Its rows
+            run at exactly their times; ``random_offset`` is a TWAP / VWAP
+            option.
+
             Execution metrics are for the side with the most volume; for a
             two-sided schedule read the schedule report per order
             (:meth:`get_sim_schedule_report`). With ``engine="fm"`` a
@@ -345,7 +350,8 @@ class SimulationResource:
             ``model_id``; or an ``exec_algos`` entry has a ``start_time``
             that is not "HH:MM" / "HH:MM:SS", a ``type`` of ``"css"`` (replaced
             by ``"order_schedule"``), or an ``order_schedule`` with a
-            schedule-level ``side`` or with both ``rows`` and ``rows_csv``.
+            key other than ``rows`` / ``rows_csv`` (such as ``side`` or
+            ``random_offset``) or with both ``rows`` and ``rows_csv``.
 
             If the named data is unusable (422). The market identity is checked
             against the catalogue before submission:
