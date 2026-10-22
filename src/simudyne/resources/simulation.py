@@ -1269,7 +1269,8 @@ class SimulationResource:
         Returns
         -------
         list of dict
-            One dict per schedule row, in file order, with these keys:
+            One dict per schedule row, in time order (rows with the same
+            time keep their file order), with these keys:
 
             - line (int): 1-based CSV line, header = 1 (for rows given
               inline, the row index)
