@@ -166,13 +166,18 @@ class TestRunEngines:
     def test_abm_sends_no_model_fields(self):
         body = self._body(scenario="flash_crash", **self.MARKET)
         assert body["scenario"] == "flash_crash"
-        for absent in ("model_id", "duration_minutes", "horizon", "device", "model_args"):
+        for absent in ("model_id", "duration_minutes", "horizon", "device", "model_args", "start_time"):
             assert absent not in body
 
     def test_fm_sends_no_scenario(self):
         body = self._body(engine="fm", model_id="m", duration_minutes=30, **self.MARKET)
         assert body["model_id"] == "m" and body["duration_minutes"] == 30
         assert "scenario" not in body and "scenario_params" not in body
+
+    def test_fm_sends_start_time_only_when_set(self):
+        body = self._body(engine="fm", model_id="m", duration_minutes=30, start_time="10:23:07", **self.MARKET)
+        assert body["start_time"] == "10:23:07"
+        assert "start_time" not in self._body(engine="fm", model_id="m", **self.MARKET)
 
     def test_unset_n_runs_is_left_to_the_api(self):
         # The default differs per engine (5 and 1), so the SDK sends nothing

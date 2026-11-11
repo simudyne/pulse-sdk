@@ -147,6 +147,7 @@ class SimulationResource:
         horizon: int = None,
         device: str = "",
         model_args: dict = None,
+        start_time: str = "",
     ):
         """Submit a simulation run to be executed asynchronously.
 
@@ -257,6 +258,12 @@ class SimulationResource:
             FM only. Per-run overrides of the model's declared knobs, e.g.
             ``{"temperature": 0.7}``. Unknown or out-of-range keys are
             rejected.
+        start_time : str, optional
+            FM only. Where in the day the run starts, ``"HH:MM"`` or
+            ``"HH:MM:SS"`` exchange-local. Empty (the default) is the session
+            open. The warm-start context is the rows just after it, so
+            ``duration_minutes`` counts from here; it must fall inside
+            continuous trading.
 
         Returns
         -------
@@ -403,6 +410,8 @@ class SimulationResource:
             payload["device"] = device
         if model_args is not None:
             payload["model_args"] = model_args
+        if start_time:
+            payload["start_time"] = start_time
 
         return self._pro_request("POST", RUN_PATH, json=payload)
 
