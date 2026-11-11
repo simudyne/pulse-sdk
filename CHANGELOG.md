@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.5 (2026-11-11)
+
+### Features
+
+- **simulation**: Start_time for foundation-model runs
+  ([`7d5343d`](https://github.com/simudyne/pulse-sdk/commit/7d5343dccc8490171b74bd6b9efc603d11709e92))
+
+- simulation.run(start_time="HH:MM[:SS]") starts an FM run mid-session; sent only when set, so
+  existing calls carry no new field - documented with the other FM-only arguments - test: sent when
+  set, absent otherwise, never on an ABM run
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v0.9.0-dev.4 (2026-10-21)
 
 ### Bug Fixes
