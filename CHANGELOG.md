@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.6 (2026-11-24)
+
+### Features
+
+- **data**: Shared filters and per-date rows for available_data and calibrated_data
+  ([`7d7d19a`](https://github.com/simudyne/pulse-sdk/commit/7d7d19ad1f26a78cf1ff9a27d09046eb180cc3c5))
+
+- available_data and calibrated_data take the same filters: symbol, q, provider, exchange, date or
+  date_from/date_to, and calibration_status ("calibrated", "failed", "in_progress"); available_data
+  also keeps model_id, and both keep limit/offset - Both return {total, limit, offset, symbols};
+  each instrument carries reference data, date_count, calibrated_count, first/last date, averages
+  and a dates list of per-day objects with the day's latest calibration status, stage, error, update
+  time, pulse_version and day stats - Breaking for callers: calibrated_data's available_dates is now
+  dates; available_data's dates are objects, not strings; the include_calibration_state argument is
+  removed (state is always on each date) - calibrate documents the 422 for a day with no raw data
+  (weekend, holiday, not delivered) and how to see a failed day (calibration_status "failed",
+  calibration_error) through available_data - README quick start reads dates from the new rows;
+  tests cover the shared filters, the removed flag and the shared docstrings
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v0.9.0-dev.5 (2026-11-11)
 
 ### Features
