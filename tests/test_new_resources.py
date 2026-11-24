@@ -123,12 +123,38 @@ class TestDataResource:
         assert path == "/data/available-data"
         assert kwargs["params"] == {"model_id": "tradefm-hkex", "limit": 5}
 
-    def test_calibration_state_is_opt_in(self):
+    def test_shared_filters_are_sent(self):
         client = FakeClient([{}, {}])
-        DataResource(client).available_data(symbol="700")
-        DataResource(client).available_data(symbol="700", include_calibration_state=True)
-        assert "include_calibration_state" not in client.calls[0][2]["params"]
-        assert client.calls[1][2]["params"]["include_calibration_state"] is True
+        DataResource(client).available_data(
+            symbol="700", date_from="2025-07-01", date_to="2025-07-31",
+            calibration_status="failed",
+        )
+        DataResource(client).calibrated_data(q="tencent", calibration_status="calibrated")
+        assert client.calls[0][2]["params"] == {
+            "symbol": "700", "date_from": "2025-07-01", "date_to": "2025-07-31",
+            "calibration_status": "failed",
+        }
+        assert client.calls[1][2]["params"] == {"q": "tencent", "calibration_status": "calibrated"}
+
+    def test_calibration_state_flag_is_gone(self):
+        # Calibration state is always on each date now, so the opt-in is gone.
+        with pytest.raises(TypeError):
+            DataResource(FakeClient([{}])).available_data(include_calibration_state=True)
+
+    def test_both_calls_take_the_same_filters(self):
+        import inspect
+        available = set(inspect.signature(DataResource.available_data).parameters)
+        calibrated = set(inspect.signature(DataResource.calibrated_data).parameters)
+        # model_id is the only difference: it narrows the raw registry to what
+        # one foundation model accepts.
+        assert available - calibrated == {"model_id"}
+        assert calibrated - available == set()
+
+    def test_shared_docs_are_filled_in(self):
+        for method in (DataResource.available_data, DataResource.calibrated_data):
+            assert "{filters}" not in method.__doc__ and "{rows}" not in method.__doc__
+            assert "calibration_status : " in method.__doc__
+            assert "calibration_error" in method.__doc__
 
     def test_calibrated_data_path(self):
         client = FakeClient([{}])

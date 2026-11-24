@@ -169,6 +169,7 @@ client = PulseABM(api_key="pk_live_...")  # or set SIMUDYNE_API_KEY
 
 # Days the agent-based model can simulate
 cal = client.data.calibrated_data(symbol="700.HK")
+dates = [d["date"] for d in cal["symbols"][0]["dates"]]
 
 # Run it, poll, read the generated book
 job = client.simulation.run(
