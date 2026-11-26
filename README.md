@@ -89,6 +89,45 @@ a name rather than merging into whatever else is there:
 
 The uploads are measured first and the platform runs follow.
 
+### Two datasets against each other
+
+The historical day is only the default reference. `reference_sim_id` or
+`reference_file` takes its place, so two datasets, historical or generated,
+are compared directly and whole, as they came: the reference first, the runs
+to evaluate second. Cut them as you want beforehand; `match_tokens` does not
+apply to them.
+
+```python
+job = client.validation.run(
+    symbol="TSCO", date="2026-06-23", provider="bmll", exchange="lse",
+    reference_file="rollout_a.parquet",
+    sim_files=["rollout_b.parquet"],
+)
+```
+
+At most one reference, and it does not count toward the 25 runs. `symbol`,
+`date`, `provider` and `exchange` still name the instrument and its tick size.
+`metadata["reference"]` says what the runs were measured against.
+
+### Comparing by tokens
+
+`match_tokens` chooses the stretch scored by token index instead of time of
+day: a token is one row, in order from index 0, on both the historical and the
+simulated side. `True` cuts the historical day to the runs' own span in tokens
+(its first `n` rows, `n` the longest run); `[start, end]` cuts both sides to
+that range, end exclusive, and `n` alone is `[0, n]`.
+
+```python
+for tokens in ([0, 1024], [1024, 2048]):
+    client.validation.run(
+        symbol="TSCO", date="2026-06-23", provider="bmll", exchange="lse",
+        sim_ids=fm_ids, match_tokens=tokens,
+    )
+```
+
+Two jobs over different ranges show how the generator changes as its rollout
+goes on. `metadata["token_window"]` reports what was kept.
+
 `plots` is the only plot switch: unset draws nothing, `True` draws every
 figure the enabled areas can draw, and a list draws just those ids. An area
 switched off draws nothing either way.

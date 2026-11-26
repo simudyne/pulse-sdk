@@ -108,6 +108,7 @@ class TestMetricFlags:
          ("volume_correlation", True), ("fid", False), ("mind", True),
          ("lob", True), ("sample_period", "100ms"),
          ("match_generated_sample", True),
+         ("match_tokens", True), ("match_tokens", [1024, 2048]),
          ("plots", ["statistical.radar"])],
     )
     def test_explicit_options_are_forwarded(self, flag, value):
@@ -406,6 +407,75 @@ class TestBothSourcesAtOnce:
                 sim_ids=["s"] * 13,
                 **IDENTITY,
             )
+
+
+class TestReference:
+    """Two datasets compared directly: the reference stands where the
+    historical day would, and is never one of the runs."""
+
+    def test_no_reference_sends_none(self):
+        client, _ = _run([{"job_id": "v1"}])
+        assert "reference_sim_id" not in client.calls[0][2]["json"]
+
+    def test_a_reference_run_goes_beside_the_sim_ids(self):
+        client, _ = _run([{"job_id": "v1"}], reference_sim_id="sim_ref")
+        method, path, kwargs = client.calls[0]
+        assert (method, path) == ("POST", "/validation/run")
+        assert kwargs["json"]["reference_sim_id"] == "sim_ref"
+
+    def test_a_reference_file_goes_multipart_as_its_own_part(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_files=[("b.parquet", b"y")],
+            reference_file=("a.parquet", b"x"),
+            **IDENTITY,
+        )
+        method, path, kwargs = client.calls[0]
+        assert (method, path) == ("POST", "/validation/run/upload")
+        parts = [(field, part[0]) for field, part in kwargs["files"]]
+        assert parts == [("sim_files", "b.parquet"), ("reference_file", "a.parquet")]
+
+    def test_a_reference_file_against_platform_runs_alone(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_ids=["sim_a"], reference_file=("a.parquet", b"x"), **IDENTITY
+        )
+        _, path, kwargs = client.calls[0]
+        assert path == "/validation/run/upload"
+        assert [field for field, _ in kwargs["files"]] == ["reference_file"]
+        assert kwargs["data"]["sim_ids"] == json.dumps(["sim_a"])
+
+    def test_a_reference_does_not_count_toward_the_cap(self):
+        client = FakeClient([{"job_id": "v1"}])
+        ValidationResource(client).run(
+            sim_files=[("a.parquet", b"x")] * MAX_SIM_FILES,
+            reference_file=("r.parquet", b"r"),
+            **IDENTITY,
+        )
+        assert len(client.calls) == 1
+
+    @pytest.mark.parametrize(
+        "reference",
+        [{"reference_sim_id": "sim_ref"}, {"reference_file": ("a.parquet", b"x")}],
+    )
+    def test_a_reference_is_compared_whole(self, reference):
+        client = FakeClient()
+        with pytest.raises(ValueError, match="compared whole"):
+            ValidationResource(client).run(
+                sim_ids=SIM_IDS, match_tokens=[0, 1024], **reference, **IDENTITY
+            )
+        assert client.calls == []
+
+    def test_both_references_are_refused(self):
+        client = FakeClient()
+        with pytest.raises(ValueError, match="not both"):
+            ValidationResource(client).run(
+                sim_ids=SIM_IDS,
+                reference_sim_id="sim_ref",
+                reference_file=("a.parquet", b"x"),
+                **IDENTITY,
+            )
+        assert client.calls == []
 
 
 class TestPagingAndStatus:

@@ -44,6 +44,34 @@ not by a parameter here. What is never gated: the L1 and Wasserstein
 ``stylised_fact_verdicts`` for both the historical day and each simulation.
 Those are derived scalars and booleans, not series, so every tier receives
 them.
+
+Comparing two datasets
+----------------------
+The historical day is only the default reference. ``reference_sim_id`` or
+``reference_file`` replaces it, so two datasets, historical or generated, are
+compared directly and whole, as they came: the reference is the first,
+``sim_ids`` / ``sim_files`` the ones evaluated against it. Cut them as you
+want beforehand; ``match_tokens`` does not apply to them::
+
+    job = client.validation.run(
+        symbol="BARC", date="2026-06-17", provider="bmll", exchange="lse",
+        reference_file="rollout_a.parquet",
+        sim_files=["rollout_b.parquet"],
+    )
+
+``symbol``, ``date``, ``provider`` and ``exchange`` still name the instrument
+and its tick size. ``metadata["reference"]`` says what the runs were measured
+against.
+
+Comparing by tokens
+-------------------
+``match_tokens`` chooses the stretch scored by token index instead of time of
+day: a token is one row, in order from index 0, on both the historical and the
+simulated side. ``True`` cuts the historical day to the runs' own span in
+tokens; ``[start, end]`` cuts both sides to that range. Submitting one set of
+runs over ``[0, 1024]`` and again over ``[1024, 2048]`` shows how the
+generator changes as its rollout goes on. ``metadata["token_window"]`` reports
+what was kept.
 """
 
 import json
@@ -71,9 +99,16 @@ _AREA_FLAGS = (
 
 #: ``lob`` marks the frames as L2 snapshots, which switches off anything
 #: needing the message stream; ``sample_period`` and ``match_generated_sample``
-#: set the grid the book is resampled onto; ``plots`` is False, True, or a list
-#: of plot ids.
-_EXTRA_FIELDS = ("lob", "sample_period", "match_generated_sample", "plots")
+#: set the grid the book is resampled onto; ``match_tokens`` chooses the
+#: stretch scored by token index; ``plots`` is False, True, or a list of plot
+#: ids.
+_EXTRA_FIELDS = (
+    "lob",
+    "sample_period",
+    "match_generated_sample",
+    "match_tokens",
+    "plots",
+)
 
 
 def _frame_to_parquet(entry, index: int):
@@ -259,6 +294,9 @@ class ValidationResource:
         lob=None,
         sample_period=None,
         match_generated_sample=None,
+        match_tokens=None,
+        reference_sim_id=None,
+        reference_file=None,
         n_levels: int = 10,
         plots=None,
     ) -> dict:
@@ -327,6 +365,23 @@ class ValidationResource:
         match_generated_sample : bool, optional
             Match the generated frames' grid even when ``sample_period`` is
             given.
+        match_tokens : bool, int or list of int, optional
+            Which stretch is scored, by token index: a token is one row, in
+            order from index 0, on both the historical and the simulated
+            side. ``False`` scores every token. ``True`` cuts the historical
+            day to the runs' own span in tokens, its first ``n`` rows for the
+            longest run's ``n``. ``[start, end]`` cuts both sides to that
+            range, end exclusive; ``n`` alone is ``[0, n]``. ``None`` uses the
+            server's default, which is off.
+        reference_sim_id : str, optional
+            A platform simulation to measure the runs against in place of the
+            historical day.
+        reference_file : path, ``(filename, bytes)`` or DataFrame, optional
+            Your own parquet to measure the runs against in place of the
+            historical day, in pulse format. At most one of
+            ``reference_sim_id`` and ``reference_file``; neither counts toward
+            the 25 runs. The two sides are compared whole, as they came, so
+            ``match_tokens`` cannot be given with either.
         n_levels : int, default 10
             Book levels to measure over.
         plots : bool or list of str, optional
@@ -358,8 +413,9 @@ class ValidationResource:
         ------
         ValueError
             If neither or both of ``sim_ids`` and ``sim_files`` are given,
-            either is empty, more than 25 runs are passed, or ``n_levels`` is
-            below 1. Also raised when a named population maps to a single
+            either is empty, more than 25 runs are passed, ``n_levels`` is
+            below 1, both ``reference_sim_id`` and ``reference_file`` are
+            given, or ``match_tokens`` is given with either. Also raised when a named population maps to a single
             string or a non-iterable instead of a list of runs, when an
             unknown option name is passed, and when the API accepts the
             request but returns no ``job_id``.
@@ -417,6 +473,24 @@ class ValidationResource:
         ...     lob=True,
         ...     sample_period="1s",
         ... )
+
+        Tokens 1024 to 2048 of the historical day and of each run:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     sim_ids=["sim_abc"],
+        ...     match_tokens=[1024, 2048],
+        ... )
+
+        One rollout against another, both whole:
+
+        >>> job = client.validation.run(
+        ...     symbol="BARC", date="2025-09-02",
+        ...     provider="bmll", exchange="lse",
+        ...     reference_sim_id="sim_abc",
+        ...     sim_ids=["sim_def"],
+        ... )
         """
         if sim_ids is None and sim_files is None:
             raise ValueError("Pass sim_ids, sim_files, or both")
@@ -433,6 +507,15 @@ class ValidationResource:
             )
         if n_levels < 1:
             raise ValueError("n_levels must be at least 1")
+        if reference_sim_id is not None and reference_file is not None:
+            raise ValueError("Pass reference_sim_id or reference_file, not both")
+        if match_tokens not in (None, False) and (
+            reference_sim_id is not None or reference_file is not None
+        ):
+            raise ValueError(
+                "match_tokens does not apply with a reference: the two are "
+                "compared whole, so cut them beforehand"
+            )
 
         config = _build_config(
             n_levels,
@@ -445,36 +528,36 @@ class ValidationResource:
             lob=lob,
             sample_period=sample_period,
             match_generated_sample=match_generated_sample,
+            match_tokens=match_tokens,
             plots=plots,
         )
 
         # Platform runs alone go as JSON; anything with files of your own
         # goes multipart, because bytes cannot travel in the JSON body. The
         # upload endpoint takes sim_ids too, so a mixed job is one request.
-        if sim_files is None:
-            submitted = self._client._request(
-                "POST",
-                RUN_PATH,
-                json={
-                    "symbol": symbol,
-                    "date": date,
-                    "provider": provider,
-                    "exchange": exchange,
-                    "sim_ids": (
-                        {k: list(v) for k, v in sim_ids.items()}
-                        if isinstance(sim_ids, dict)
-                        else list(sim_ids)
-                    ),
-                    "config": config,
-                },
-            )
+        if sim_files is None and reference_file is None:
+            body = {
+                "symbol": symbol,
+                "date": date,
+                "provider": provider,
+                "exchange": exchange,
+                "sim_ids": (
+                    {k: list(v) for k, v in sim_ids.items()}
+                    if isinstance(sim_ids, dict)
+                    else list(sim_ids)
+                ),
+                "config": config,
+            }
+            if reference_sim_id is not None:
+                body["reference_sim_id"] = reference_sim_id
+            submitted = self._client._request("POST", RUN_PATH, json=body)
         else:
             # The uploads take the first slots of the combined run list and
             # the platform runs follow. Only the uploads' own grouping is sent:
             # the server offsets the platform runs past the files and names a
             # bare list on either side, so the offset has one implementation
             # rather than two that can disagree.
-            flat, groups = _flatten(sim_files, offset=0, unnamed=None)
+            flat, groups = _flatten(sim_files or [], offset=0, unnamed=None)
 
             # Three-tuple parts: the content type matters to the server's
             # multipart parser, so it is sent explicitly.
@@ -482,6 +565,17 @@ class ValidationResource:
                 ("sim_files", (*_frame_to_parquet(entry, i), "application/octet-stream"))
                 for i, entry in enumerate(flat)
             ]
+            # The reference rides as its own part, never as one of the runs.
+            if reference_file is not None:
+                files.append(
+                    (
+                        "reference_file",
+                        (
+                            *_frame_to_parquet(reference_file, 0),
+                            "application/octet-stream",
+                        ),
+                    )
+                )
             # Multipart has no nesting, so the grouping rides in the config
             # and the ids in a JSON string field.
             if groups:
@@ -499,6 +593,8 @@ class ValidationResource:
                     if isinstance(sim_ids, dict)
                     else list(sim_ids)
                 )
+            if reference_sim_id is not None:
+                data["reference_sim_id"] = reference_sim_id
             submitted = self._client._request(
                 "POST", UPLOAD_PATH, files=files, data=data
             )
