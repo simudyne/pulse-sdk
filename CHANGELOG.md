@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.8 (2026-11-27)
+
+### Bug Fixes
+
+- Changes to the notebook wordings
+  ([`f6a754e`](https://github.com/simudyne/pulse-sdk/commit/f6a754e5ae04e0df0f4696d14ed78b89e851f0dd))
+
+### Features
+
+- **examples**: Production API notebooks, run and saved with results
+  ([`3dafc43`](https://github.com/simudyne/pulse-sdk/commit/3dafc439212cdae99b3c2f3e8d8c358f87570cfa))
+
+- 00-first-run: models, a 3-draw FM run on the test day, poll, mid/book/spread, what models and GPUs
+  your account has, how to request more, a T4 GPU run - 01-your-own-day: pick a symbol-day from the
+  catalogue and run it - 02-exec-algos: TWAP, VWAP over 3 draws and a CSS schedule vs their
+  baselines - 03-previous-results: get_jobs, rebuild a run from its id, the cached library - wait()
+  polls until every run's results are readable, not just is_complete - Simudyne header with a
+  Production banner and links to pulse.simudyne.com/docs - Executed against pulse-api.simudyne.com
+  with simudyne-pulse 0.9.0
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v0.9.0-dev.7 (2026-11-27)
 
 ### Bug Fixes
