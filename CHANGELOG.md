@@ -1,6 +1,128 @@
 # CHANGELOG
 
 
+## v0.9.0-dev.7 (2026-11-27)
+
+### Bug Fixes
+
+- **docs**: Order_schedule takes only rows or rows_csv, no random_offset
+  ([`5e19c1c`](https://github.com/simudyne/pulse-sdk/commit/5e19c1c65c548a9e9a41e9099c97b45948763446))
+
+- simulation.run docstring: any key on an order_schedule other than rows / rows_csv (side,
+  random_offset, ...) is a 422; random_offset is a TWAP / VWAP option
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01XFUfKECAtxRKhHspsXEkFa
+
+- **simulation**: Event check basis follows the sourcing standard
+  ([`9dff355`](https://github.com/simudyne/pulse-sdk/commit/9dff35533a86d0bc99b8ea568715557c359473d8))
+
+- get_sim_events docstring: "doc" now means a qualifying source states the figure (legislation,
+  official guidance, a final enforcement finding, a published peer-reviewed article); derived
+  figures are "default" - Docstring only; no behaviour change
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **simulation**: Schedule report docstring reads skips from end and end_reason
+  ([`8bed2de`](https://github.com/simudyne/pulse-sdk/commit/8bed2de44ea1e1f300cd5713dac6ab0f5f078b16))
+
+- get_sim_schedule_report no longer lists status/skip_reason; a skipped row is end "skipped" with
+  the reason in end_reason
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01XFUfKECAtxRKhHspsXEkFa
+
+- **simulation**: Schedule report docstring says time order
+  ([`70be852`](https://github.com/simudyne/pulse-sdk/commit/70be852cc1bf9404a00b7334afd5445e710f8ca5))
+
+- get_sim_schedule_report rows come in time order; rows with the same time keep their file order
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01XFUfKECAtxRKhHspsXEkFa
+
+### Features
+
+- **data**: One filter set and one row shape for available_data and calibrated_data
+  ([`c36a955`](https://github.com/simudyne/pulse-sdk/commit/c36a9550e0de301a7f9699c819decb63b7978a13))
+
+- Both calls take the same filters: date ranges, calibration_status (available only), stats bounds,
+  reference data, calibratable, scanned_only, include_stats - Rows are per-date objects with the
+  day's latest calibration state and error, and (demo tier) scanned, calibratable and its reason,
+  event counts and stats; calibrated_data's available_dates becomes dates -
+  include_calibration_state is gone: calibration state is always on each date - calibrate documents
+  the new 422s (no market data, cannot be calibrated) and how to follow a failed day
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **simulation**: Document v3 events, schedule rows and schedule-orders
+  ([`04c4a6d`](https://github.com/simudyne/pulse-sdk/commit/04c4a6d475158b06e6e0c960795d486d463d550b))
+
+- get_sim_events docstring: every event type (any data and simulation only), checks with basis and
+  source, order_ids on order-level and window-level types, roles in refs, aggressor ids for the
+  account rules - Notes on the schedule-orders endpoint (role, tested_against, rules, meets_rules,
+  amends, thresholds), read through the client's session - run(): css rows documented, with
+  peg_limit_ticks and amend rows; get_sim_event documents its signature
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **simulation**: Get_sim_events and get_sim_event
+  ([`636a7fc`](https://github.com/simudyne/pulse-sdk/commit/636a7fc9bad4ee2a4d163945d7f407116605ce06))
+
+- simulation.get_sim_events(sim_id): the event detector's findings on a run, with the order ids
+  behind spoofing-like events - simulation.get_sim_event(sim_id, event_id): one event with its
+  signature - tests pin both paths and that css "rows" pass through unchanged
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **simulation**: Get_sim_schedule_orders
+  ([`ed30dc0`](https://github.com/simudyne/pulse-sdk/commit/ed30dc09d17dddfc443374b2f15ea536f114354e))
+
+- client.simulation.get_sim_schedule_orders(sim_id) reads GET
+  /simulation/results/{sim_id}/schedule-orders: every scheduled order with its role, tested_against,
+  rules, meets_rules and amends, plus the thresholds the rules used - get_sim_events points to it
+  instead of the raw URL - unit test for the path
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **simulation**: Get_sim_schedule_report
+  ([`168fd7d`](https://github.com/simudyne/pulse-sdk/commit/168fd7da665d2d0e3e7743fc419997e1b23e56da))
+
+- client.simulation.get_sim_schedule_report(sim_id) returns the run's per-schedule-row report as a
+  list of dicts, from GET /simulation/results/{sim_id}/schedule-report - Document
+  schedule_rows_skipped / schedule_skip_reasons in exec_results, schedule_report.parquet in
+  get_sim_data and has_schedule_report in list_sim_files
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01XFUfKECAtxRKhHspsXEkFa
+
+- **simulation**: Order_schedule replaces css in exec_algos
+  ([`ed1754e`](https://github.com/simudyne/pulse-sdk/commit/ed1754ef0b706dc9011716f8dc6be3f7ef5ed528))
+
+- Document type "order_schedule" with rows / rows_csv; css is refused by the API and a list of
+  market orders is market rows - Drop the time -> quantity "orders" conversion from exec algo
+  serialisation; no schedule-level side in docs or examples - Note execution metrics are for the
+  side with the most volume and FM schedules must be one-sided market orders - Update tests to send
+  order_schedule
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01XFUfKECAtxRKhHspsXEkFa
+
+- **simulation**: Schedules as CSV
+  ([`4d7d285`](https://github.com/simudyne/pulse-sdk/commit/4d7d28526355470d425444a7177f8e643b111847))
+
+- exec_algos css entries take rows_csv: CSV text, a .csv path (str or Path) or a pandas / polars
+  DataFrame; the SDK sends CSV text - run() docstring describes rows_csv with an example
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01XFUfKECAtxRKhHspsXEkFa
+
+
 ## v0.9.0-dev.6 (2026-11-24)
 
 ### Features
